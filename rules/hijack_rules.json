@@ -1,0 +1,62 @@
+{
+  "debug": {
+    "log_frames": false,
+    "dump_dir": "",
+    "dry_run": false
+  },
+  "banner": {
+    "types": [
+      "text",
+      "banner",
+      "notice",
+      "popup"
+    ],
+    "block_banner": false,
+    "replace": [
+      [
+        "你好这是一次测试",
+        "这不是测试"
+      ],
+      [
+        "1",
+        "2"
+      ],
+      [
+        "3",
+        "4"
+      ]
+    ],
+    "remove": [
+      "请家长签字"
+    ],
+    "append": "喵~~~",
+    "force_sender": "",
+    "force_tts": null
+  },
+  "seat": {
+    "exclude": [],
+    "only": [],
+    "pairs": [
+      [
+        "小明",
+        "小红"
+      ]
+    ]
+  },
+  "timer": {
+    "force_seconds": 0
+  },
+  "commands": {
+    "block": [],
+    "block_snapshot": false
+  },
+  "files": {
+    "block_traversal": true,
+    "block": []
+  },
+  "block_ws_types": [
+    "renderer.pack.push"
+  ],
+  "block_paths": [],
+  "passthrough": false
+}

@@ -1,0 +1,199 @@
+# 使用手册 (How-To)
+
+> 从部署到日常到恢复, 照着做即可。工具链整体位于本目录 (jsxlb/),
+> 所有脚本/日志/规则/备份都在目录内, 整目录拷贝即可迁移。
+
+## 前置条件
+
+- Python 3.10+ (`py -3` 可用)
+- Node.js (patch_asar.py 用 npx @electron/asar 解包/打包)
+- 目标: 教室小喇叭客户端已安装 (位置自动定位, 也可 `XLB_CLIENT_DIR` 指定)
+
+```bash
+pip install aiohttp cryptography
+```
+
+## 一、一键开启 (推荐)
+
+```
+双击 start.bat
+```
+
+自动完成 (全程写 `logs/start_end.log`, 每步可见):
+
+```
+[1] 定位客户端安装目录 (注册表/常见路径/快捷方式/盘符扫描)
+[2] 清理残留客户端进程 (防止旧会话/幽灵窗口)
+[3] asar 补丁: 解包→8处 rejectUnauthorized:false→重打包 (原版备份 app.asar.bak)
+    - 已补丁则跳过 (大小对比判断, end 还原后会自动重打)
+[4] CA 信任: 自签 CA 装入 Windows 受信任根 (已信任则跳过)
+[5] hosts 劫持: 127.0.0.1 xlb.810086.com (已存在则跳过) + flushdns
+[6] 静默启动代理 (daemon, PID 文件管理; 先清理孤儿代理进程防端口占用)
+[7] 静默启动客户端 (detached 无窗口)
+```
+
+任一步失败 → 立即中止并打印原因, 不会带病继续。
+
+客户端显示"已连接服务器"即成功 —— 它连的是本地代理, 代理转发真实服务器。
+
+## 二、日常使用
+
+| 操作 | 做法 |
+|---|---|
+| 看状态 | `py -3 scripts\hijack_daemon.py status` (代理 PID/规则/最近改写事件) |
+| 一键健康检查 | 双击 `bin\status.bat` |
+| 改规则 | 编辑 `rules\hijack_rules.json` → `py -3 scripts\hijack_daemon.py reload` |
+| 热更规则 API | `curl -X POST http://127.0.0.1:8100/__rules -H "Content-Type: application/json" -d @rules\hijack_rules.json` |
+| 查看当前规则 | 浏览器开 `http://127.0.0.1:8100/__rules` |
+| 只停代理 (保留客户端) | `py -3 scripts\hijack_daemon.py stop` |
+| 重启代理 | `py -3 scripts\hijack_daemon.py restart` |
+| 带日志启动客户端 (排障) | `py -3 scripts\launch_log.py` → 日志 `logs\client_console.log` |
+| 网络四步诊断 | `py -3 scripts\netcheck.py` |
+
+## 三、一键恢复 (end)
+
+```
+双击 end.bat
+```
+
+自动完成 (日志 `logs/start_end.log`):
+
+```
+[1] 停代理 (daemon + 清理孤儿监听进程)
+[2] 关闭客户端 (全部 jsxlb 进程)
+[3] 还原 asar (app.asar.bak → app.asar, 处理只读属性)
+[4] 删除 CA (Windows 根存储)
+[5] 清理 hosts + flushdns
+```
+
+执行后系统完全回到劫持前: 客户端直连真实服务器, 无任何残留。
+
+## 四、手动等价入口 (脚本级, 供进阶)
+
+```
+全流程开启:  管理员运行 bin\hijack_on.bat   (旧式, 同 start.bat 效果)
+全流程恢复:  管理员运行 bin\hijack_off.bat  (旧式, 同 end.bat 效果)
+仅补丁:     管理员运行 bin\hijack_patch.bat → py -3 src\patch_asar.py
+仅代理:     py -3 scripts\hijack_daemon.py start|stop|restart|status|reload
+仅客户端:   py -3 scripts\run_client.py
+定位客户端: py -3 src\client_locator.py    /    py -3 scripts\install_info.py
+```
+
+> 注: bin 下 `start_all_silent.bat` / `stop_proxy_silent.bat` 是早期简化版,
+> 现在统一用根目录 `start.bat` / `end.bat`。
+
+## 五、各功能配置示例 (rules/hijack_rules.json)
+
+### 改横幅内容
+
+```json
+"banner": {
+  "replace": [["今晚交作业", "今晚自由活动"], ["1", "2"], ["3", "4"]],
+  "remove": ["请家长签字"],
+  "append": " ——教务处喵~",
+  "force_sender": "校长办公室",
+  "force_tts": null
+}
+```
+
+- `replace`: 多组替换, **按数组顺序执行**
+- `remove`: 删除子串 (先于 replace)
+- `append`: 尾部追加 (最后执行)
+- `force_sender`: 改发件人显示名, `""` = 不改
+- `force_tts`: `true/false` 强制语音开关, `null` = 不改
+
+TTS 朗读与横幅同字段, 文本改后语音同步变。
+
+### 禁止横幅
+
+```json
+"banner": { "block_banner": true }
+```
+
+下行横幅帧直接丢弃, 大屏不弹。
+
+### 禁止汉化/热更新包
+
+```json
+"block_ws_types": ["renderer.pack.push"]
+```
+
+默认已开。可加 `"notification.push"` 等 (完整清单见 RULES_REFERENCE.md)。
+
+### 随机点名 / 座位规则
+
+```json
+"seat": {
+  "exclude": ["张三"],
+  "only": [],
+  "pairs": [["小明", "小红"], ["王五", "赵六"]]
+}
+```
+
+- `exclude`: 从座位表与点名名单移除 (永不显示/永不被抽)
+- `only`: 只保留这些人 (空 = 所有人)
+- `pairs`: 结对, 后者强制坐前者右邻位, 原右邻互换。可配多对
+
+同时作用于: 座位表显示 (HTTP)、托盘随机点名 (students API)、班级数据推送帧 (WS)。
+
+### 计时器
+
+```json
+"timer": { "force_seconds": 9999 }
+```
+
+`>0` 强制横幅自动关闭秒数; `0` = 不干预 (用服务器下发值)。
+
+### 封锁 API
+
+```json
+"block_paths": ["/api/v2/xxx"]
+```
+
+命中即返回 `{"success":true,"data":{}}` 假成功, 客户端无感知。
+
+### 低调模式
+
+```json
+"passthrough": true
+```
+
+代理照常转发, 规则全部跳过 (连接/事件仍记日志)。
+
+## 六、恢复/撤销速查
+
+| 想恢复什么 | 怎么做 |
+|---|---|
+| 一切恢复 | 双击 `end.bat` |
+| 只暂停改写 | `passthrough: true` + reload |
+| 只还原客户端 | `end.bat` (asar 自动还原); 手动: 拷 `app.asar.bak` 回去 |
+| 客户端被自动更新覆盖 | 重新双击 `start.bat` (补丁自动重打, 原版备份不会被覆盖) |
+| 迁移到新机器 | 整目录拷贝; 装好客户端后双击 `start.bat` |
+
+## 七、校园网 / DNS 被封怎么办
+
+代理**不需要你配置 DNS**。它自带多层解析兜底链, 只要有一层能用就行:
+
+```
+缓存 → 公共UDP DNS → 系统/校内 DNS → DoH(443) → 手动 IP
+```
+
+诊断、一条命令:
+
+```bash
+py -3 scripts\netcheck.py     # 看第 [3] 步系统/校内 DNS 是否有 IP
+```
+
+- 第 [3]/[4] 步有 IP 且 [5] REACHABLE → 什么都不用管, 双击 `start.bat`
+- [2][3][4] 全失败 → 编辑 `rules/upstream_ip.txt`, 取消注释并填真实 IP, 再 `start.bat`
+- [5] 全 BLOCKED → 校园网封了出站 443, 与本工具无关, 换网络/热点
+
+详细分析 → [CAMPUS_NETWORK.md](CAMPUS_NETWORK.md)
+
+## 八、故障排查入口
+
+| 症状 | 先看 |
+|---|---|
+| 客户端"未连接服务器" | 完整排查 → [TROUBLESHOOTING.md](TROUBLESHOOTING.md) |
+| 校园网 hosts 无效 / DNS 污染 | [CAMPUS_NETWORK.md](CAMPUS_NETWORK.md) + `netcheck.py` |
+| 具体规则怎么写 | [RULES_REFERENCE.md](RULES_REFERENCE.md) |

@@ -1,0 +1,35 @@
+# 运行产物 (每次运行生成)
+logs/
+backup/
+tmp/
+*.pid
+*.log
+
+# 第三方素材 / 分析产物 (体积大, 非本项目代码)
+app_extracted/
+poc/_legacy/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# 编译产物
+*.exe
+*.dll
+*.so
+
+# 编辑器 / 系统
+.pi/
+.vscode/
+.idea/
+*.swp
+*~
+Thumbs.db
+Desktop.ini
+
+# 备份文件
+*.bak
+*.tmp
