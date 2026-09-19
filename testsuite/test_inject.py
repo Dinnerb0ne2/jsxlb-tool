@@ -147,6 +147,13 @@ async def main():
                 msg3 = await asyncio.wait_for(cli.receive(), 10)
                 got3 = json.loads(msg3.data)
                 assert got3.get("content") == "CLI 注入 喵~", got3
+                # 6. 阻止自动更新: 服务器判定接口被假应答, 更新源拉包 404
+                up_ck = await s.post("http://127.0.0.1:%d/api/v2/download/desktop/check-update" % HTTP_PORT,
+                                     json={"appId": "x", "currentVersion": "1.2.1"})
+                uj = await up_ck.json()
+                assert up_ck.status == 200 and uj.get("data", {}).get("updateAvailable") is False, uj
+                feed = await s.get("http://127.0.0.1:%d/desktop-updates/latest.yml" % HTTP_PORT)
+                assert feed.status == 404, feed.status
         ok = True
     finally:
         proxy.terminate()

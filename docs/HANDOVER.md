@@ -148,6 +148,7 @@ jsxlb/
 | 事件流监听 | `scripts/watch.py` | tail -f，只看关键事件（改写/封锁/注入/连接） |
 | 集成测试 | `testsuite/test_inject.py` | 假上游 + 真代理 + WS 客户端：改写/注入/捕获/CLI 四段断言 |
 | 课表调度 (三个弹窗) | `schedule` 规则段 + `scripts/schedule.py` | 按导入课表: 课间显示、课上收起(课间自动补发)或丢弃; `/__status` 暴露状态与折叠队列 |
+| 阻止客户端自动更新 (默认开启) | `update` 规则段 | 三层防线: 服务器判定接口假应答 + `/desktop-updates/*` 404 + `desktop.update.*` 丢帧; 防 asar 补丁被更新覆盖 |
 
 验证：`--selftest` ALL PASS（扩到 20 组断言）；`testsuite/test_inject.py` PASS；
 全量 `py_compile` 通过。

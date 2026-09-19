@@ -45,6 +45,7 @@
 | 直推横幅/命令 (不经教师端) | `py -3 scripts\inject.py ...` 或 `POST /__inject` |
 | 会话/帧捕获 (内存环) | `debug.capture_max` (默认 200) + `GET /__frames` |
 | 三个弹窗按课表显示 | `schedule.targets` + `py -3 scripts\schedule.py import timetable.json` |
+| 阻止客户端自动更新 (默认开启) | `update.block` 三层防线 (防 asar 补丁被更新覆盖) |
 
 ## 目录结构
 

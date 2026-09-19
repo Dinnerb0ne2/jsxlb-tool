@@ -60,6 +60,16 @@ RULES = {
         "block_traversal": True,           # True: 拦截含 .. 的路径穿越文件名 (安全)
         "block": []                        # ["xlb_poc"] 拦截文件名含这些子串的下发
     },
+    # ---------------- 阻止自动更新 (默认开启) ----------------
+    # 三层防线: 服务器判定接口 (假应答无更新) / 更新源拉包 (404) / WS 推更新帧 (丢弃)
+    "update": {
+        "block": True,                     # 总开关 (默认开: 自动更新会覆盖 asar 把证书补丁冲掉)
+        "block_server_check": True,         # POST /api/v2/download/desktop/check-update -> 假应答 updateAvailable:false
+        "block_feed": True,                  # 拦 /desktop-updates/* (latest.yml 与安装包)
+        "block_ws": True,                   # 丢 desktop.update.* 帧
+        "block_pack": False,                # renderer.pack.push (界面热更包), 需要时开
+        "feed_path": "desktop-updates"       # 与客户端 DESKTOP_UPDATE_FEED_PATH 一致
+    },
     # ---------------- 通用封锁 ----------------
     "block_ws_types": [],                 # ["renderer.pack.push"] 丢弃指定 type 的 WS 帧
     "block_paths": [],                     # ["/api/v2/xxx"] 命中即返回空成功
@@ -476,6 +486,26 @@ def _type_match(t, pats):
             return True
     return False
 
+def update_http_block(path):
+    """阻止自动更新的 HTTP 判据: 命中返回假响应描述, 否则 None。
+    两层: 客户端先问服务器的 check-update (假应答无更新), 更新源拉包 (404)。
+    返回 {"status": int, "json": {...}} 或 {"status": 404, "text": "..."}。"""
+    if RULES.get("passthrough"):
+        return None
+    upd = RULES.get("update") or {}
+    if not upd.get("block"):
+        return None
+    p = str(path or "")
+    if upd.get("block_server_check", True) \
+            and p.rstrip("/").endswith("/api/v2/download/desktop/check-update"):
+        return {"status": 200,
+                "json": {"success": True, "data": {"updateAvailable": False, "rolloutControlled": True}}}
+    if upd.get("block_feed", True):
+        feed = "/" + str(upd.get("feed_path") or "desktop-updates").strip("/")
+        if p.startswith(feed) or "desktop-updates" in p:
+            return {"status": 404, "text": "Not Found"}
+    return None
+
 # ---------------- 课表调度 ----------------
 # 按导入的课表决定三个弹窗 (banner/popup/fullscreen) 什么时候显示。
 # 状态: class=上课中 / break=课间 / off=课表外(放学、周末、放假)。
@@ -743,6 +773,17 @@ def transform_broadcast_frame(frame):
             return False
         return True
 
+    # --- 阻止自动更新 (默认开启): 丢服务器推的更新帧 ---
+    upd = r.get("update") or {}
+    if upd.get("block"):
+        if upd.get("block_ws", True) and (_type_match(ftype, ["desktop.update.*"])
+                                           or _type_match(mtype, ["desktop.update.*"])):
+            log("BLOCK update frame type=%s (阻止自动更新)" % ftype)
+            return None
+        if upd.get("block_pack") and _type_match(ftype, ["renderer.pack.push"]):
+            log("BLOCK renderer pack type=%s (阻止界面热更)" % ftype)
+            return None
+
     # --- 类型级封锁 (任意 type; 支持 desktop.update.* 这种前缀写法) ---
     block_types = r.get("block_ws_types") or []
     if _type_match(mtype, block_types) or _type_match(ftype, block_types):
@@ -949,6 +990,7 @@ async def proxy_http(request):
             "upstream": ARGS.upstream, "upstreamIp": UPSTREAM_IP,
             "passthrough": bool(RULES.get("passthrough")),
             "schedule": schedule_state(), "foldQueue": len(FOLD_QUEUE),
+            "updateBlocked": bool((RULES.get("update") or {}).get("block")),
         })
 
     if path == "/__clients":
@@ -998,6 +1040,13 @@ async def proxy_http(request):
         return web.json_response({"ok": True, "sent_to": sent, "frame": frame})
 
     passthrough = RULES.get("passthrough")
+
+    ub = update_http_block(path)
+    if ub:
+        log("UPDATE BLOCKED %s (%s)" % (path, "假应答: 无更新" if ub["status"] == 200 else "拦下更新包"))
+        if "json" in ub:
+            return web.json_response(ub["json"])
+        return web.Response(status=ub["status"], text=ub.get("text", ""))
 
     for bp in ([] if passthrough else RULES["block_paths"]):
         if path.startswith(bp):
@@ -1362,6 +1411,24 @@ def selftest():
     assert len(_items) == 1 and _items[0][2]["messageId"] == "s6", _items
     assert not FOLD_QUEUE, "fold_take 应清空队列"
     setr(schedule={"enabled": False, "force": "auto", "blocked_action": "fold"})
+    # 24 阻止自动更新 (默认开启): WS 帧丢弃 + HTTP 假应答/拦包 三层
+    setr(update={"block": True, "block_server_check": True, "block_feed": True,
+                 "block_ws": True, "block_pack": False})
+    assert transform_downlink(json.dumps({"type": "desktop.update.force", "version": "9.9.9"})) is None
+    assert transform_downlink(json.dumps({"type": "desktop.update.queued", "version": "9.9.9"})) is None
+    assert transform_downlink(json.dumps({"type": "renderer.pack.push", "version": 3})) is not None
+    setr(update={"block_pack": True})
+    assert transform_downlink(json.dumps({"type": "renderer.pack.push", "version": 3})) is None
+    setr(update={"block_pack": False})
+    _ub = update_http_block("/api/v2/download/desktop/check-update")
+    assert _ub and _ub["status"] == 200 and _ub["json"]["data"]["updateAvailable"] is False, _ub
+    _ub = update_http_block("/desktop-updates/latest.yml")
+    assert _ub and _ub["status"] == 404, _ub
+    assert update_http_block("/api/v2/seats/display/10001") is None
+    setr(update={"block": False})
+    assert transform_downlink(json.dumps({"type": "desktop.update.force"})) is not None
+    assert update_http_block("/desktop-updates/latest.yml") is None
+    setr(update={"block": True})
     print("[selftest] ALL PASS")
     RULES["timer"]["force_seconds"] = 0
     RULES["seat"] = {"exclude": [], "only": [], "pairs": []}

@@ -126,6 +126,16 @@ TTS 朗读与横幅同字段, 文本改后语音同步变。
 默认**空** (不封锁), 需要时按上面的写法加。匹配的是帧的 `payload.type` (完全匹配,
 以 `*` 结尾做前缀匹配如 `"desktop.update.*"`); 完整清单见 RULES_REFERENCE.md。
 
+### 禁止客户端自动更新 (默认开启)
+
+```json
+"update": { "block": true, "block_pack": false }
+```
+
+三层拦: 服务器判定接口 (假应答 `updateAvailable:false`)、`/desktop-updates/*` 拉包 (404)、
+`desktop.update.*` 推帧 (丢弃)。防的是自动更新把 asar 里的证书补丁冲掉。
+想连界面热更包一起禁就 `"block_pack": true`。详见 [CONFIG_GUIDE.md](CONFIG_GUIDE.md)。
+
 ### 随机点名 / 座位规则
 
 ```json

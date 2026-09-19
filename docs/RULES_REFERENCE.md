@@ -19,6 +19,7 @@
   "timer":    { ... },          // 计时器
   "commands": { ... },          // 桌面控制命令拦截
   "files":    { ... },          // 文件下发拦截
+  "update":   { ... },          // 阻止客户端自动更新 (默认开启)
   "block_ws_types": [],         // 封锁的消息类型
   "block_paths": [],            // 封锁的 API 路径
   "passthrough": false          // 总开关 (直通)
@@ -116,6 +117,21 @@ teacher.profile.updated 教师资料
 
 `true` = 直通模式。代理照常转发, 但所有改写/封锁规则全部跳过。
 日志只记录连接事件。适合"想保持通道但暂不干预"的场景。
+
+## update (阻止客户端自动更新)
+
+默认开启。客户端自动更新会覆盖 `app.asar` 把证书补丁冲掉, 所以三层全拦:
+
+| 字段 | 默认 | 说明 |
+|---|---|---|
+| `block` | `true` | 总开关 |
+| `block_server_check` | `true` | 假应答 `POST /api/v2/download/desktop/check-update` → `updateAvailable:false` |
+| `block_feed` | `true` | 拦 `/desktop-updates/*` (`latest.yml` 与安装包) → 404 |
+| `block_ws` | `true` | 丢 `desktop.update.*` 帧 |
+| `block_pack` | `false` | `renderer.pack.push` 界面热更包, 需要时开 |
+| `feed_path` | `desktop-updates` | 客户端 `DESKTOP_UPDATE_FEED_PATH`, 一般不用改 |
+
+完整说明与验证方式 → [CONFIG_GUIDE.md](CONFIG_GUIDE.md)。
 
 ## schedule (课表调度 — 三个弹窗)
 

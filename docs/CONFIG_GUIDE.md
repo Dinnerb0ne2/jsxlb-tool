@@ -65,6 +65,10 @@ py -3 -c "import json;json.load(open(r'rules\hijack_rules.json',encoding='utf-8'
   "timer": { "force_seconds": 0 },
   "commands": { "block": [], "block_snapshot": false },
   "files": { "block_traversal": true, "block": [] },
+  "update": {
+    "block": true, "block_server_check": true, "block_feed": true,
+    "block_ws": true, "block_pack": false, "feed_path": "desktop-updates"
+  },
   "block_ws_types": [],
   "block_paths": [],
   "passthrough": false,
@@ -245,6 +249,31 @@ curl -s http://127.0.0.1:8100/__status            # schedule / foldQueue 字段
 tail 日志关键字: SCHED fold / SCHED release / SCHED drop
 ```
 
+### 2.10 update — 阻止客户端自动更新 (默认开启)
+
+客户端自动更新会覆盖 `app.asar`, 把证书补丁冲掉 → 大屏"未连接服务器"。
+所以这一节默认就是开着的, 三层防线对应客户端真实的更新链路
+(`main.js:448-474` 的 `checkForDesktopUpdates`):
+
+| 层 | 客户端行为 | 代理动作 |
+|---|---|---|
+| 1. 服务器判定 | `POST /api/v2/download/desktop/check-update` 先问要不要更新 | 假应答 `updateAvailable:false`, 客户端记"无更新"就结束 |
+| 2. 更新源拉包 | 同意后才去 `/desktop-updates/` 拉 `latest.yml` 与安装包 | 整段路径 404, 拉不到任何包 |
+| 3. WS 推送 | 服务器 `desktop.update.check/available/force/queued` 帧 | 直接丢帧 |
+
+| 字段 | 默认 | 说明 |
+|---|---|---|
+| `block` | `true` | 总开关 |
+| `block_server_check` | `true` | 假应答判定接口 |
+| `block_feed` | `true` | 拦 `/desktop-updates/*` |
+| `block_ws` | `true` | 丢 `desktop.update.*` 帧 |
+| `block_pack` | `false` | `renderer.pack.push` (界面热更包); 想连界面热更一起禁就开 |
+| `feed_path` | `desktop-updates` | 与客户端 `DESKTOP_UPDATE_FEED_PATH` 保持一致 |
+
+验证: 日志出现 `UPDATE BLOCKED /api/v2/download/desktop/check-update (假应答: 无更新)`,
+`/__status` 里 `updateBlocked: true`。想临时放行就 `update.block: false` + reload;
+放行后建议手动跑一次 `start.bat` 重新确认补丁在位。
+
 ---
 
 ## 3. 课表导入与维护
@@ -379,6 +408,10 @@ py -3 scripts\schedule.py off / on                  # 临时关/开调度 (课�
   "timer": { "force_seconds": 0 },
   "commands": { "block": ["shutdown_system"], "block_snapshot": true },
   "files": { "block_traversal": true, "block": [] },
+  "update": {
+    "block": true, "block_server_check": true, "block_feed": true,
+    "block_ws": true, "block_pack": false, "feed_path": "desktop-updates"
+  },
   "block_ws_types": ["renderer.pack.push"],
   "block_paths": [],
   "passthrough": false,

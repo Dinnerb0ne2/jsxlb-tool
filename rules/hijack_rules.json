@@ -30,6 +30,14 @@
     "block_traversal": true,
     "block": []
   },
+  "update": {
+    "block": true,
+    "block_server_check": true,
+    "block_feed": true,
+    "block_ws": true,
+    "block_pack": false,
+    "feed_path": "desktop-updates"
+  },
   "block_ws_types": [],
   "block_paths": [],
   "passthrough": false,
