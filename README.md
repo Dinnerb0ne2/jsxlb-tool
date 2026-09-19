@@ -26,6 +26,7 @@
 | 帧注入 (不经教师端) | `py -3 scripts\inject.py banner "文本" --sender 王老师` |
 | 抓帧/回看 | `py -3 scripts\inject.py frames 50` (pass/rewrite/drop 动作标记) |
 | 事件流监听 | `py -3 scripts\watch.py` (tail -f, 只看关键事件) |
+| 课表调度 | `py -3 scripts\schedule.py status` / `import timetable.json` |
 
 ## 功能一览
 
@@ -43,6 +44,7 @@
 | 代理在但不干预 (低调) | `passthrough: true` |
 | 直推横幅/命令 (不经教师端) | `py -3 scripts\inject.py ...` 或 `POST /__inject` |
 | 会话/帧捕获 (内存环) | `debug.capture_max` (默认 200) + `GET /__frames` |
+| 三个弹窗按课表显示 | `schedule.targets` + `py -3 scripts\schedule.py import timetable.json` |
 
 ## 目录结构
 
@@ -62,6 +64,7 @@ jsxlb/                          ← 本工具链根 (整体拷贝可迁移)
 │   ├── rules.py                规则 CLI (免手写 JSON, 无转义烦恼)
 │   ├── inject.py               帧注入 CLI (banner/safety/teacher/command/raw/frames)
 │   ├── watch.py                事件流监听 (tail -f, 只看关键事件)
+│   ├── schedule.py             课表调度 (import/status/check/force/on/off)
 │   ├── netcheck.py             网络诊断 (六步, 含抗污染验证)
 │   ├── run_client.py / launch_log.py   启动客户端
 │   └── install_info.py         打印客户端路径
@@ -77,6 +80,7 @@ jsxlb/                          ← 本工具链根 (整体拷贝可迁移)
 │   └── upstream_ip.txt         上游真实 IP 手动兜底 (校园网 DNS 全封时用, 平时空)
 ├── docs/
 │   ├── CHEATSHEET.md          ★ 命令速查 + 文档地图
+│   ├── CONFIG_GUIDE.md        ★ 配置文件填写详解 (字段/课表调度/配方/常见错填)
 │   ├── WRITEUP.md              ★ 攻击分析报告 (漏洞链/验证证据/缓解)
 │   ├── USAGE.md                使用手册 (逐步)
 │   ├── PRINCIPLE.md            技术原理
@@ -97,6 +101,7 @@ jsxlb/                          ← 本工具链根 (整体拷贝可迁移)
 |---|---|
 | 接手项目先看 | [docs/HANDOVER.md](docs/HANDOVER.md) |
 | 命令速查 | [docs/CHEATSHEET.md](docs/CHEATSHEET.md) |
+| 配置文件怎么填 (详解) | [docs/CONFIG_GUIDE.md](docs/CONFIG_GUIDE.md) |
 | 怎么做到的 | [docs/PRINCIPLE.md](docs/PRINCIPLE.md) |
 | 完整攻击分析 (WP) | [docs/WRITEUP.md](docs/WRITEUP.md) |
 | 部署/日常/恢复 | [docs/USAGE.md](docs/USAGE.md) |

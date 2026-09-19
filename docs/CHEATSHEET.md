@@ -17,6 +17,9 @@
 | `py -3 scripts\inject.py clients` | 在线会话 + 捕获概况 |
 | `py -3 scripts\inject.py frames 50 --clear` | 看/清捕获环 (pass/rewrite/drop/inject) |
 | `py -3 scripts\watch.py` | 事件流监听 (tail -f, 只看关键事件) |
+| `py -3 scripts\schedule.py import timetable.json` | 导入课表, 三个弹窗按课表显示 |
+| `py -3 scripts\schedule.py status` | 课表状态 (上课/课间/课表外) + 折叠队列 |
+| `py -3 scripts\schedule.py force class` | 演练: 强制"上课中" |
 | `py -3 scripts\netcheck.py` | 网络六步诊断 (hosts/公共DNS/系统DNS/DoH/出站/代理) |
 
 ## 看日志
@@ -91,6 +94,7 @@ curl "http://127.0.0.1:8100/__frames?n=20"            # 最近 20 条帧 (含动
 | 需求 | 文档 |
 |---|---|
 | 完整攻击分析 (WP) | [WRITEUP.md](WRITEUP.md) |
+| 配置怎么填 (详解) | [CONFIG_GUIDE.md](CONFIG_GUIDE.md) |
 | 部署/日常/配置 | [USAGE.md](USAGE.md) |
 | 技术原理 (为什么可行) | [PRINCIPLE.md](PRINCIPLE.md) |
 | 规则字段全参考 | [RULES_REFERENCE.md](RULES_REFERENCE.md) |

@@ -63,7 +63,26 @@ RULES = {
     # ---------------- 通用封锁 ----------------
     "block_ws_types": [],                 # ["renderer.pack.push"] 丢弃指定 type 的 WS 帧
     "block_paths": [],                     # ["/api/v2/xxx"] 命中即返回空成功
-    "passthrough": False                   # True = 直通模式: 代理活着但不改/不拦任何东西
+    "passthrough": False,                  # True = 直通模式: 代理活着但不改/不拦任何东西
+    # ---------------- 课表调度 (按课表控制三个弹窗) ----------------
+    # 三个弹窗由帧的 displayMode 决定 (main.js:12472-12497):
+    #   banner=横幅 / popup=小弹窗 / fullscreen=全屏(含每日安全、班主任寄语)
+    "schedule": {
+        "enabled": False,
+        "force": "auto",             # auto / class / break / off —— 演练用强制状态
+        "weekdays": [1, 2, 3, 4, 5],  # 1=周一 ... 7=周日
+        "periods": [],                # [{"name":"第1节","start":"08:00","end":"08:45"}, ...]
+        "breaks": [],                 # 显式课间; 留空 = 课节之间的空隙自动算课间
+        "overrides": {},              # {"2026-10-01": "off"} 放假 / "school" 周末补课
+        "timetable_file": "",         # 导入的课表文件 (scripts/schedule.py import 写入)
+        "blocked_action": "fold",     # fold=课上收起、课间展开(补发) / drop=直接丢弃
+        "fold_ttl_minutes": 60,       # 折叠队列最长保留时长
+        "targets": {                  # 每个弹窗的策略: allow / break_only / class_only / block
+            "banner": "break_only",
+            "popup": "break_only",
+            "fullscreen": "break_only"
+        }
+    }
 }
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -457,6 +476,199 @@ def _type_match(t, pats):
             return True
     return False
 
+# ---------------- 课表调度 ----------------
+# 按导入的课表决定三个弹窗 (banner/popup/fullscreen) 什么时候显示。
+# 状态: class=上课中 / break=课间 / off=课表外(放学、周末、放假)。
+_SCHED_FILE_CACHE = {}
+FOLD_QUEUE = []        # 课上收起的帧 (blocked_action=fold 时), 课间/课表外展开补发
+FOLD_LAST_STATE = None
+
+def _hhmm_to_min(s):
+    """'08:00' -> 480; 非法返回 None。"""
+    try:
+        h, m = str(s).strip().split(":")[:2]
+        h, m = int(h), int(m)
+        if 0 <= h < 24 and 0 <= m < 60:
+            return h * 60 + m
+    except Exception:
+        pass
+    return None
+
+def _fmt_hhmm(minutes):
+    return "%02d:%02d" % divmod(int(minutes), 60)
+
+def _norm_periods(items):
+    """课节/课间归一化, 容忍不同导出格式的字段名。只接受同日窗口 (end > start)。"""
+    out = []
+    for it in (items or []):
+        if not isinstance(it, dict):
+            continue
+        s = _hhmm_to_min(it.get("start") or it.get("begin") or it.get("startTime"))
+        e = _hhmm_to_min(it.get("end") or it.get("finish") or it.get("endTime"))
+        if s is None or e is None or e <= s:
+            continue
+        out.append({"name": str(it.get("name") or it.get("title") or ""), "s": s, "e": e})
+    return sorted(out, key=lambda x: x["s"])
+
+def _schedule_conf():
+    """schedule 配置; timetable_file 有值时用导入文件的课表覆盖 (按 mtime 缓存, 不逐帧读盘)。"""
+    conf = dict(RULES.get("schedule") or {})
+    f = (conf.get("timetable_file") or "").strip()
+    if not f:
+        return conf
+    path = f if os.path.isabs(f) else os.path.join(ROOT_DIR, f)
+    try:
+        key = (path, os.path.getmtime(path))
+    except OSError:
+        return conf
+    if _SCHED_FILE_CACHE.get("key") != key:
+        try:
+            with open(path, "r", encoding="utf-8") as fh:
+                ext = json.load(fh)
+            _SCHED_FILE_CACHE["key"] = key
+            _SCHED_FILE_CACHE["data"] = ext if isinstance(ext, dict) else {}
+            log("[schedule] timetable loaded from %s" % path)
+        except Exception as e:
+            log("[schedule] timetable load failed: %s" % e)
+            return conf
+    for k in ("weekdays", "periods", "breaks", "overrides"):
+        if k in (_SCHED_FILE_CACHE.get("data") or {}):
+            conf[k] = _SCHED_FILE_CACHE["data"][k]
+    return conf
+
+def schedule_state(now=None):
+    """当前课表状态 (now 可注入, 便于测试)。
+    返回 {enabled, state: class|break|off, name, next, reason}。"""
+    conf = _schedule_conf()
+    now = now or datetime.datetime.now()
+    st = {"enabled": bool(conf.get("enabled")), "state": "off", "name": "",
+          "next": "", "reason": ""}
+    force = str(conf.get("force") or "auto").lower()
+    if force in ("class", "break", "off"):
+        st["state"], st["reason"] = force, "force=%s" % force
+        return st
+    day = now.strftime("%Y-%m-%d")
+    ov = str((conf.get("overrides") or {}).get(day, "")).lower()
+    wds = [int(w) for w in (conf.get("weekdays") or [1, 2, 3, 4, 5]) if str(w).strip().isdigit()]
+    school_day = now.isoweekday() in (wds or [1, 2, 3, 4, 5])
+    if ov in ("off", "holiday", "rest", "false", "0"):
+        st["reason"] = "节假日"
+        return st
+    if ov in ("school", "on", "work", "true", "1"):
+        school_day = True
+    if not school_day:
+        st["reason"] = "非上课日"
+        return st
+    periods = _norm_periods(conf.get("periods"))
+    if not periods:
+        st["reason"] = "课表为空"
+        return st
+    t = now.hour * 60 + now.minute
+    for p in periods:
+        if p["s"] <= t < p["e"]:
+            st["state"], st["name"], st["next"] = "class", p["name"], _fmt_hhmm(p["e"])
+            return st
+    for b in _norm_periods(conf.get("breaks")):
+        if b["s"] <= t < b["e"]:
+            nxt = next((p for p in periods if p["s"] >= t), None)
+            st["state"], st["name"] = "break", b["name"]
+            st["next"] = _fmt_hhmm(nxt["s"]) if nxt else ""
+            return st
+    if periods[0]["s"] <= t < periods[-1]["e"]:      # 课节之间的空隙 = 课间
+        nxt = next((p for p in periods if p["s"] >= t), None)
+        st["state"], st["name"] = "break", "课间"
+        st["next"] = _fmt_hhmm(nxt["s"]) if nxt else ""
+        return st
+    st["reason"] = "课表时间外"
+    return st
+
+def _popup_target(frame):
+    """把下行消息帧映射到三个弹窗目标: banner / popup / fullscreen。
+    只有 broadcast.message 才参与调度 —— 命令帧、文件帧、class.data.* 等数据/信令帧一律返回 ''。"""
+    if str(frame.get("type") or "").lower() != "broadcast.message":
+        return ""
+    mtype = str(frame.get("messageType") or frame.get("message_type") or "").lower()
+    if mtype in ("command", "file"):
+        return ""
+    mode = str(frame.get("displayMode") or frame.get("display_mode") or "banner").lower()
+    if mode in ("fullscreen", "daily_safety_fullscreen", "head_teacher_message_fullscreen"):
+        return "fullscreen"
+    if mode == "popup":
+        return "popup"
+    return "banner"
+
+def schedule_allows(target, now=None):
+    """按目标策略判定是否放行, 返回 (allow, why)。
+    break_only: 课上丢, 课间与课表外放行 / class_only: 只在课上放行 /
+    allow: 永远 / block: 永远丢。passthrough 时调度不生效。"""
+    if RULES.get("passthrough"):
+        return True, "passthrough"
+    conf = _schedule_conf()
+    if not conf.get("enabled"):
+        return True, "disabled"
+    pol = str((conf.get("targets") or {}).get(target, "allow")).lower()
+    if pol in ("", "allow", "off"):
+        return True, "allow"
+    if pol == "block":
+        return False, "block"
+    st = schedule_state(now)
+    if pol == "break_only":
+        return st["state"] != "class", ("课上" if st["state"] == "class" else st["state"])
+    if pol == "class_only":
+        return st["state"] == "class", st["state"]
+    return True, "allow"
+
+def fold_push(target, frame, why):
+    """课上收起的弹窗入队 (上限 50 条, 过期按 fold_ttl_minutes 清)。"""
+    conf = _schedule_conf()
+    ttl = int(conf.get("fold_ttl_minutes") or 60) * 60
+    now = time.time()
+    FOLD_QUEUE[:] = [x for x in FOLD_QUEUE if now - x[0] <= ttl]
+    if len(FOLD_QUEUE) >= 50:
+        FOLD_QUEUE.pop(0)
+    FOLD_QUEUE.append((now, target, frame))
+    log("SCHED fold target=%s (%s), 队列 %d 条" % (target, why, len(FOLD_QUEUE)))
+
+def fold_take():
+    """取出折叠队列里未过期的帧并清空队列。"""
+    conf = _schedule_conf()
+    ttl = int(conf.get("fold_ttl_minutes") or 60) * 60
+    now = time.time()
+    items = [x for x in FOLD_QUEUE if now - x[0] <= ttl]
+    del FOLD_QUEUE[:]
+    return items
+
+async def fold_flush(state):
+    """课间/课表外: 把课上收起的弹窗按序补发。"""
+    items = fold_take()
+    sent = 0
+    for _ts, _target, frame in items:
+        text = json.dumps(frame, ensure_ascii=False)
+        capture_add("release", frame, "release")
+        for c in list(CLIENTS):
+            try:
+                await c.send_str(text)
+                sent += 1
+            except Exception:
+                CLIENTS.discard(c)
+    if items:
+        log("SCHED release %d frame(s) at %s (sent=%d)" % (len(items), state, sent))
+
+async def schedule_ticker():
+    """每 15s 看一次状态: 离开上课态就把折叠的弹窗展开补发。"""
+    global FOLD_LAST_STATE
+    while True:
+        try:
+            conf = _schedule_conf()
+            if conf.get("enabled") and str(conf.get("blocked_action") or "fold") == "fold":
+                st = schedule_state()["state"]
+                if FOLD_LAST_STATE == "class" and st != "class" and FOLD_QUEUE:
+                    await fold_flush(st)
+                FOLD_LAST_STATE = st
+        except Exception as e:
+            log("[schedule] ticker error: %s" % e)
+        await asyncio.sleep(15)
+
 def _debug_frame(frame, direction="down"):
     """debug.log_frames / dump_dir: 记录或落盘每个帧。"""
     dbg = RULES.get("debug") or {}
@@ -736,6 +948,7 @@ async def proxy_http(request):
             "clients": len(CLIENTS), "capture": len(CAPTURE), "startedAt": STARTED_AT,
             "upstream": ARGS.upstream, "upstreamIp": UPSTREAM_IP,
             "passthrough": bool(RULES.get("passthrough")),
+            "schedule": schedule_state(), "foldQueue": len(FOLD_QUEUE),
         })
 
     if path == "/__clients":
@@ -866,7 +1079,8 @@ def transform_downlink(text, direction="down"):
     """服务器->客户端 文本帧的统一入口: 所有 type 都过规则引擎。
     (旧版只送 broadcast.message, 导致 block_ws_types 对其它类型永不命中,
      class.data.* 内嵌座位改写不可达)。返回改写后文本; None = 丢弃该帧。
-    每个帧都进捕获环 (动作: pass / rewrite / drop)。"""
+    课表调度在这里生效: 被压下的弹窗 fold(进队列, 课间补发) 或 drop。
+    每个帧都进捕获环 (动作: pass / rewrite / drop / fold / release)。"""
     try:
         frame = json.loads(text)
     except Exception:
@@ -878,6 +1092,17 @@ def transform_downlink(text, direction="down"):
         log("frame DROPPED (type=%s id=%s)" % (frame.get("type"), frame.get("messageId")))
         capture_add(direction, frame, "drop")
         return None
+    target = _popup_target(new)
+    if target:
+        allow, why = schedule_allows(target)
+        if not allow:
+            if str((_schedule_conf().get("blocked_action") or "fold")) == "fold":
+                fold_push(target, new, why)
+                capture_add(direction, new, "fold")
+            else:
+                log("SCHED drop target=%s (%s)" % (target, why))
+                capture_add(direction, new, "drop")
+            return None
     capture_add(direction, new, "rewrite" if new != frame else "pass")
     return json.dumps(new, ensure_ascii=False)
 
@@ -1097,6 +1322,46 @@ def selftest():
     # 20 手动上游 IP 权威短路 (不做污染过滤/证书验证)
     _ip, _src, _cands = resolve_upstream("xlb.810086.com", explicit_ip="203.0.113.9")
     assert _ip == "203.0.113.9" and _src == "manual" and _cands == ["203.0.113.9"], (_ip, _src, _cands)
+    # 21 课表调度状态: 上课/课间/课表外 + 周末 + 放假 + force
+    import datetime as _dt
+    setr(schedule={"enabled": True, "force": "auto", "weekdays": [1, 2, 3, 4, 5],
+                   "periods": [{"name": "第1节", "start": "08:00", "end": "08:45"},
+                               {"name": "第2节", "start": "09:00", "end": "09:45"}],
+                   "breaks": [], "overrides": {"2026-09-22": "off"},
+                   "timetable_file": "", "blocked_action": "drop", "fold_ttl_minutes": 60,
+                   "targets": {"banner": "break_only", "popup": "break_only",
+                                "fullscreen": "break_only"}})
+    assert schedule_state(_dt.datetime(2026, 9, 21, 8, 30))["state"] == "class"      # 周一第1节
+    assert schedule_state(_dt.datetime(2026, 9, 21, 8, 50))["state"] == "break"      # 课节空隙=课间
+    assert schedule_state(_dt.datetime(2026, 9, 21, 10, 30))["state"] == "off"       # 放学后
+    assert schedule_state(_dt.datetime(2026, 9, 20, 8, 30))["state"] == "off"        # 周日
+    assert schedule_state(_dt.datetime(2026, 9, 22, 8, 30))["state"] == "off"        # 放假
+    setr(schedule={"force": "class"})
+    assert schedule_state(_dt.datetime(2026, 9, 21, 22, 0))["state"] == "class"      # 演练: 强改上课
+    # 22 调度拦帧: 课上横幅/全屏丢弃, 课间放行, 命令帧与数据帧不受调度影响
+    setr(commands={"block": [], "block_snapshot": False})   # 清掉 #9 留下的命令拦截
+    setr(schedule={"force": "class"})
+    _banner = {"type": "broadcast.message", "messageType": "text", "messageId": "s1", "content": "x"}
+    assert transform_downlink(json.dumps(_banner)) is None
+    assert transform_downlink(json.dumps({"type": "broadcast.message", "messageType": "text",
+                                          "messageId": "s2", "displayMode": "fullscreen",
+                                          "content": "x"})) is None
+    assert transform_downlink(json.dumps({"type": "broadcast.message", "messageType": "command",
+                                          "messageId": "s3", "command": "lock_system"})) is not None
+    assert transform_downlink(json.dumps({"type": "class.data.updated", "data": {}})) is not None   # 数据帧不参与调度
+    setr(schedule={"force": "break"})
+    assert transform_downlink(json.dumps(dict(_banner, messageId="s4"))) is not None
+    setr(schedule={"force": "off"})
+    assert transform_downlink(json.dumps(dict(_banner, messageId="s5"))) is not None
+    # 23 折叠模式: 课上进队列 -> 课间取出释放
+    setr(schedule={"force": "class", "blocked_action": "fold"})
+    del FOLD_QUEUE[:]
+    assert transform_downlink(json.dumps(dict(_banner, messageId="s6"))) is None
+    assert len(FOLD_QUEUE) == 1, FOLD_QUEUE
+    _items = fold_take()
+    assert len(_items) == 1 and _items[0][2]["messageId"] == "s6", _items
+    assert not FOLD_QUEUE, "fold_take 应清空队列"
+    setr(schedule={"enabled": False, "force": "auto", "blocked_action": "fold"})
     print("[selftest] ALL PASS")
     RULES["timer"]["force_seconds"] = 0
     RULES["seat"] = {"exclude": [], "only": [], "pairs": []}
@@ -1189,6 +1454,7 @@ async def main():
 
     log("upstream   : %s" % ARGS.upstream)
     log("规则: GET/POST http://127.0.0.1:%d/__rules" % ARGS.http_port)
+    asyncio.create_task(schedule_ticker())
     while True:
         await asyncio.sleep(3600)
 

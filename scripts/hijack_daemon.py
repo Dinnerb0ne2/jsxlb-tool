@@ -84,10 +84,32 @@ def wait_ports_free(timeout=15):
         time.sleep(1)
     return False
 
+def port_owner_pids(ports=(443, 8100)):
+    """从 netstat 反查监听这些端口的 PID (PID 文件丢失时的孤儿兜底)。"""
+    pids = set()
+    try:
+        out = subprocess.run(["netstat", "-ano"], capture_output=True, text=True,
+                             timeout=15, errors="replace").stdout
+    except Exception:
+        return pids
+    for line in (out or "").splitlines():
+        parts = line.split()
+        if len(parts) >= 5 and "LISTENING" in line:
+            lp = parts[1]
+            for port in ports:
+                if lp.endswith(":%d" % port) and parts[-1].isdigit():
+                    pids.add(int(parts[-1]))
+    return pids
+
 def start():
-    if pid_alive(read_pid()) and is_our_proxy(read_pid()):
-        print("[=] proxy already running (PID %d)" % read_pid())
+    pid = read_pid()
+    if pid_alive(pid) and is_our_proxy(pid):
+        print("[=] proxy already running (PID %d)" % pid)
         return
+    for p in sorted(port_owner_pids()):
+        if p > 4 and is_our_proxy(p):
+            print("[!] 端口 443/8100 已被监听 (PID %d, 无 PID 文件) —— 先 stop 再 start" % p)
+            return
     # clean stale pidfile
     try:
         os.remove(PIDFILE)
@@ -113,22 +135,39 @@ def start():
     print("[+] proxy started silently (PID %d), log: %s" % (p.pid, os.path.normpath(LOGFILE)))
 
 def stop():
+    """杀代理并**核实结果**: PID 文件失效/丢失时从 443/8100 反查孤儿。
+    提权启动的代理在非提权下杀不掉 (拒绝访问), 此时返回 False —— 调用方
+    (restart / 一键脚本) 必须知道失败, 不能报假成功。"""
+    pids = []
     pid = read_pid()
-    if not pid_alive(pid) or not is_our_proxy(pid):
+    if pid_alive(pid) and is_our_proxy(pid):
+        pids.append(pid)
+    for p in sorted(port_owner_pids()):
+        if p > 4 and p not in pids and is_our_proxy(p):
+            pids.append(p)
+    if not pids:
         print("[=] proxy not running")
         try:
             os.remove(PIDFILE)
         except OSError:
             pass
-        return
-    # 直接强杀: 代理无持久状态可丢, 端口释放由 start 前的 wait_ports_free 兜底
-    subprocess.run(["taskkill", "/F", "/PID", str(pid)],
-                   capture_output=True)
-    try:
-        os.remove(PIDFILE)
-    except OSError:
-        pass
-    print("[+] proxy stopped (PID %d)" % pid)
+        return True
+    ok = True
+    for p in pids:
+        subprocess.run(["taskkill", "/F", "/PID", str(p)], capture_output=True)
+        time.sleep(0.5)
+        if pid_alive(p):
+            ok = False
+            print("[!] kill FAILED for PID %d —— 代理是提权启动的, 需管理员权限" % p)
+    if ok:
+        print("[+] proxy stopped (%s)" % ", ".join("PID %d" % p for p in pids))
+        try:
+            os.remove(PIDFILE)
+        except OSError:
+            pass
+    else:
+        print("    → 以管理员运行: bin\\hijack_on.bat (先杀后拉一键完成)")
+    return ok
 
 def status():
     pid = read_pid()
@@ -171,7 +210,9 @@ def reload():
              r["banner"]["append"], r.get("passthrough")))
 
 def restart():
-    stop()
+    if not stop():
+        print("[!] restart 中止: 旧代理未杀掉 (见上面提示)")
+        return
     wait_ports_free()
     start()
 

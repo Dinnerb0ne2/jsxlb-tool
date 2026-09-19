@@ -59,7 +59,8 @@ Get-Content <本项目目录>\logs\hijack_proxy.log -Tail 20
 3. 没有 → 依次查:
    - 是否 `passthrough: true`
    - 规则是否已热更 (POST /__rules 或 `py -3 scripts\hijack_daemon.py reload`)
-   - 横幅 messageType 是否在改写列表 (text/banner/notice), 不在则加进 `transform_broadcast_frame`
+   - 是否被课表调度压下了 (`schedule.targets` 的 `break_only` + 上课中) —— 看日志 `SCHED fold` / `SCHED drop`
+   - 横幅 messageType 是否在改写列表 (text/banner/notice), 不在则加进去或写 `notice*` 这种前缀
    - 客户端是否真的走了代理 (见上表 #5)
 
 ### 座位/点名规则没生效
@@ -79,6 +80,21 @@ curl -X POST http://127.0.0.1:8100/__rules -H "Content-Type: application/json" -
 py -3 scripts\hijack_daemon.py reload
 ```
 
+**新字段没反应?** 代理是不是升级代码之前启动的 —— 旧进程只认它启动时那一版代码
+(`schedule`、`/__inject`、`/__frames` 在旧进程里根本不存在)。重启即可:
+
+```powershell
+py -3 scripts\hijack_daemon.py restart
+```
+
+### 代理是提权启动的, 普通权限杀不掉
+
+现象: `hijack_daemon.py stop` / 手动 `taskkill /F /PID <pid>` 报 `拒绝访问` (Access denied),
+但旧版 daemon 仍会打“已停止”并删掉 PID 文件 —— 看起来停了, 其实端口还被占, `restart` 也起不来。
+
+处理: 以管理员运行 `bin\hijack_on.bat` (先杀后拉一键完成) 或提权跑 `hijack_daemon.py restart`。
+新版 daemon 会**核实杀没杀掉**, 失败时如实报错并给出提示, 不再报假成功。
+
 ### start.bat / end.bat 点了没反应或失败
 
 1. **UAC 弹窗**: 双击后应弹提权确认, 点"是"。没弹 → 该 bat 在受限环境, 右键"以管理员身份运行"
@@ -86,6 +102,8 @@ py -3 scripts\hijack_daemon.py reload
 3. **常见失败**:
    - `[3] patch FAILED` → 看 `logs/hijack_patch.log` (多为权限/残留/网络 npx 下载问题)
    - `[6] proxy NOT listening` → 端口被占, 先 `end.bat` 清干净再 `start.bat`
+   - 手动杀代理报 `拒绝访问` / `Access denied` → 代理是**提权启动**的, 普通权限 `taskkill` 杀不掉:
+     以管理员运行 `bin\hijack_on.bat` (或 `end.bat`), 或提权跑 `hijack_daemon.py restart`
    - Python 找不到 → `py -3` 不可用, 换 `python` 或装 Python 并勾选 PATH
 
 ### 客户端启动崩溃 / 白屏

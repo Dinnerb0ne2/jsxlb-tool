@@ -32,5 +32,21 @@
   },
   "block_ws_types": [],
   "block_paths": [],
-  "passthrough": false
+  "passthrough": false,
+  "schedule": {
+    "enabled": false,
+    "force": "auto",
+    "weekdays": [1, 2, 3, 4, 5],
+    "periods": [],
+    "breaks": [],
+    "overrides": {},
+    "timetable_file": "",
+    "blocked_action": "fold",
+    "fold_ttl_minutes": 60,
+    "targets": {
+      "banner": "break_only",
+      "popup": "break_only",
+      "fullscreen": "break_only"
+    }
+  }
 }

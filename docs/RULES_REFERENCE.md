@@ -117,6 +117,27 @@ teacher.profile.updated 教师资料
 `true` = 直通模式。代理照常转发, 但所有改写/封锁规则全部跳过。
 日志只记录连接事件。适合"想保持通道但暂不干预"的场景。
 
+## schedule (课表调度 — 三个弹窗)
+
+按导入的课表决定三个弹窗 (banner 横幅 / popup 小弹窗 / fullscreen 全屏) 何时显示。
+状态: `class` 上课中 / `break` 课间 (含显式课间与课节空隙) / `off` 课表外 (放学、周末、放假)。
+
+| 字段 | 说明 |
+|---|---|
+| `enabled` | 总开关; `false` 时连 `force` 也不生效 |
+| `force` | `auto/class/break/off` — 演练用强制状态 |
+| `weekdays` | 上课星期 (1=周一 … 7=周日) |
+| `periods` | `[{"name":"第1节","start":"08:00","end":"08:45"}, ...]` (别名 begin/startTime、finish/endTime) |
+| `breaks` | 显式课间, 空 = 课节空隙自动算课间 |
+| `overrides` | `{"2026-10-01":"off"}` 放假 / `"school"` 补课 |
+| `timetable_file` | 导入的课表文件; 出现同名键时覆盖内联值 |
+| `blocked_action` | `fold` 课上收起、离开上课态自动补发 (默认) / `drop` 直接丢 |
+| `fold_ttl_minutes` | 折叠队列保留时长 (默认 60) |
+| `targets.banner/popup/fullscreen` | `allow` / `break_only` 课上压、课间与课表外放 / `class_only` 只在课上放 / `block` 全压 |
+
+不参与调度: `command` / `file` 帧与 `class.data.*` 等非 `broadcast.message` 帧; `passthrough` 时同样失效。
+完整填写说明、课表格式与配方 → [CONFIG_GUIDE.md](CONFIG_GUIDE.md)。
+
 ## 完整示例
 
 ```json

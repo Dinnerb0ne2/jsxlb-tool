@@ -172,6 +172,7 @@ TTS 朗读与横幅同字段, 文本改后语音同步变。
 
 ```bash
 py -3 scripts\inject.py banner "今晚六点半自习" --sender 班主任 --seconds 60
+py -3 scripts\inject.py banner "作业已发" --append " 喵~"      # 尾部追加 (传统)
 py -3 scripts\inject.py banner "临时通知" --tts on          # 带语音朗读
 py -3 scripts\inject.py safety "暑期安全" "不野泳, 不玩火"     # 每日安全全屏播报
 py -3 scripts\inject.py teacher "期末寄语" "稳住, 能赢"        # 班主任寄语全屏
@@ -181,6 +182,7 @@ py -3 scripts\inject.py raw - < frame.json                   # 从 stdin 读
 ```
 
 - 默认原样下发; 加 `--apply-rules` 则注入帧也过规则引擎 (会被 replace/block 影响)
+- `--append` 直接拼尾部文本 (与规则的 `banner.append` 独立); 想让规则统一处理就用 `--apply-rules`
 - `inject.py clients` 在线会话数; `inject.py frames 50` 看最近 50 条捕获
   (含 下行/上行/注入, 带 `pass/rewrite/drop/inject` 动作标记), `--clear` 清空
 - 捕获环只在内存, 长度 `debug.capture_max` (默认 200, 0 = 关闭); 长期归档用 `debug.dump_dir`
@@ -224,4 +226,17 @@ py -3 scripts\netcheck.py     # 看第 [3] 步系统/校内 DNS 是否有 IP
 |---|---|
 | 客户端"未连接服务器" | 完整排查 → [TROUBLESHOOTING.md](TROUBLESHOOTING.md) |
 | 校园网 hosts 无效 / DNS 污染 | [CAMPUS_NETWORK.md](CAMPUS_NETWORK.md) + `netcheck.py` |
-| 具体规则怎么写 | [RULES_REFERENCE.md](RULES_REFERENCE.md) |
+| 具体规则怎么写 | [RULES_REFERENCE.md](RULES_REFERENCE.md) / [CONFIG_GUIDE.md](CONFIG_GUIDE.md) |
+
+## 十、课表调度 (三个弹窗按课表显示)
+
+```powershell
+py -3 scripts\schedule.py import timetable.json   # 导入课表 (自动开启调度)
+py -3 scripts\schedule.py status                  # 上课中/课间/课表外 + 折叠队列
+py -3 scripts\schedule.py force class             # 演练: 强制"上课中"
+```
+
+三个弹窗 (横幅 banner / 小弹窗 popup / 全屏 fullscreen) 的策略写在
+`rules/hijack_rules.json` 的 `schedule.targets`。`break_only` 就是"课间显示、课上不显示";
+`blocked_action: "fold"` 时课上被压下的弹窗会在课间自动补发 (一条不丢)。
+课表格式、字段逐条说明与常用配方 → [CONFIG_GUIDE.md](CONFIG_GUIDE.md)。

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """帧注入 CLI — 不经过教师端, 直接向已连接的教室大屏推帧。
 
-  banner <文本> [--sender 名] [--tts on|off] [--seconds N] [--mode banner|fullscreen]
+  banner <文本> [--sender 名] [--tts on|off] [--seconds N] [--mode banner|fullscreen] [--append 尾缀]
   safety <标题> <内容> [--seconds N]     每日安全全屏播报 (displayMode=daily_safety_fullscreen)
   teacher <标题> <内容> [--seconds N]    班主任寄语全屏 (displayMode=head_teacher_message_fullscreen)
   command <动作>                         lock_system / shutdown_system / lock_app / unlock_app
@@ -62,7 +62,7 @@ def send(body):
 
 
 def cmd_banner(a):
-    body = {"text": a.text, "apply_rules": a.apply_rules}
+    body = {"text": a.text + (a.append or ""), "apply_rules": a.apply_rules}
     if a.sender:
         body["sender"] = a.sender
     if a.tts is not None:
@@ -142,6 +142,7 @@ def main():
     b.add_argument("--sender", default="", help="发件人显示名 (自动按教师卡片渲染)")
     b.add_argument("--tts", choices=["on", "off"], default=None, help="强制开/关语音朗读")
     b.add_argument("--seconds", type=int, default=0, help="自动关闭秒数")
+    b.add_argument("--append", default="", help="尾部追加 (传统用法: --append \" 喵~\")")
     b.add_argument("--mode", choices=["banner", "fullscreen"], default="banner")
     b.add_argument("--apply-rules", action="store_true", help="注入帧也过规则引擎")
     b.set_defaults(fn=cmd_banner)

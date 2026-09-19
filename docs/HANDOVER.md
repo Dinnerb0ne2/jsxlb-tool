@@ -28,6 +28,7 @@ jsxlb/
 │   ├── rules.py               规则 CLI (免手写 JSON / 免转义)
 │   ├── inject.py              帧注入 CLI (banner/safety/teacher/command/raw/frames)
 │   ├── watch.py               事件流监听 (tail -f, 只听关键事件)
+│   ├── schedule.py            课表调度 CLI (import/status/check/force/on/off)
 │   ├── netcheck.py            网络诊断 (六步, 含 DNS 污染检测)
 │   ├── run_client.py          静默启动客户端
 │   ├── launch_log.py          带日志启动客户端 (排障)
@@ -136,6 +137,7 @@ jsxlb/
 | 8 | `rules.py reload` 死行；`daemon stop` 注释与行为不符；status 事件过滤漏 INJECT | 已改正 |
 | 9 | `ctl_common.set_readonly` 死变量；`kill_port_owners` 盲杀 443/8100 占用者 | 删死变量；先验命令行，非代理进程只警告不杀 |
 | 10 | `doh_resolve` 死代码 | 删除 |
+| 11 | `daemon stop` 杀不掉提权代理也报“已停止”, 还把 PID 文件删了 → 状态错乱、restart 起不来 (现场实测) | stop 改为**核实结果** (PID 失效时从 443/8100 反查孤儿); 失败如实报错并提示提权; restart 失败即中止; start 增加孤儿占用检测 |
 
 **新增能力**：
 
@@ -145,6 +147,7 @@ jsxlb/
 | 会话与帧捕获 | `GET /__status` / `GET /__clients` / `GET /__frames` | 内存环 `debug.capture_max`（默认 200）；动作标记 pass/rewrite/drop/up/inject |
 | 事件流监听 | `scripts/watch.py` | tail -f，只看关键事件（改写/封锁/注入/连接） |
 | 集成测试 | `testsuite/test_inject.py` | 假上游 + 真代理 + WS 客户端：改写/注入/捕获/CLI 四段断言 |
+| 课表调度 (三个弹窗) | `schedule` 规则段 + `scripts/schedule.py` | 按导入课表: 课间显示、课上收起(课间自动补发)或丢弃; `/__status` 暴露状态与折叠队列 |
 
 验证：`--selftest` ALL PASS（扩到 20 组断言）；`testsuite/test_inject.py` PASS；
 全量 `py_compile` 通过。
@@ -215,6 +218,7 @@ jsxlb/
 |---|---|
 | `docs/WRITEUP.md` | 攻击分析报告（漏洞链 / 验证证据 / 缓解建议） |
 | `docs/PRINCIPLE.md` | 技术原理 |
+| `docs/CONFIG_GUIDE.md` | 配置文件填写详解 (字段逐条 / 课表调度 / 配方 / 常见错填) |
 | `docs/USAGE.md` | 使用手册 |
 | `docs/RULES_REFERENCE.md` | 规则字段完整参考 + 规则 CLI |
 | `docs/TROUBLESHOOTING.md` | 故障排查 |

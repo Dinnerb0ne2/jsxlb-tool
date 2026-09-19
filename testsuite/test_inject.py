@@ -4,6 +4,7 @@
 
 验证三件事 (跑不通 = 注入/改写/捕获链路坏了):
   1. 下行改写: 假上游发横幅 -> 客户端收到改写后的文本
+     (复刻 WRITEUP 7 回放: "你好这是一次测试" -> "这不是测试喵~")
   2. 帧注入:   POST /__inject -> 客户端立即收到注入帧
   3. 捕获环:   GET /__frames 里能看到 rewrite / inject 记录
 
@@ -33,7 +34,8 @@ UP_PORT = 18101
 RULES = {
     "debug": {"log_frames": False, "dump_dir": "", "dry_run": False, "capture_max": 50},
     "banner": {"types": ["text"], "block_banner": False,
-               "replace": [["原文", "改文"]], "remove": [], "append": "",
+               "replace": [["你好这是一次测试", "这不是测试"]], "remove": [],
+               "append": "喵~",
                "force_sender": "", "force_tts": None},
     "seat": {"exclude": [], "only": [], "pairs": []},
     "timer": {"force_seconds": 0},
@@ -57,7 +59,7 @@ async def upstream_ws(request):
     await ws.prepare(request)
     await ws.send_str(json.dumps({
         "type": "broadcast.message", "messageType": "text",
-        "messageId": "u1", "content": "原文横幅"}, ensure_ascii=False))
+        "messageId": "u1", "content": "你好这是一次测试"}, ensure_ascii=False))
     async for _msg in ws:          # 挂着不动, 让代理的双向泵继续跑
         pass
     return ws
@@ -95,15 +97,17 @@ async def main():
         encoding="utf-8", errors="replace")
 
     ok = False
+    banner_line = "?"
     try:
         async with aiohttp.ClientSession() as s:
             await wait_http(s, "http://127.0.0.1:%d/__status" % HTTP_PORT)
             async with s.ws_connect("ws://127.0.0.1:%d/ws" % HTTP_PORT) as cli:
-                # 1. 下行改写
+                # 1. 下行改写 (WRITEUP 7 回放)
                 msg = await asyncio.wait_for(cli.receive(), 10)
                 got = json.loads(msg.data)
                 assert got.get("messageId") == "u1", got
-                assert got.get("content") == "改文横幅", got
+                assert got.get("content") == "这不是测试喵~", got
+                banner_line = got.get("content")
 
                 # 2. 帧注入
                 inj = await s.post("http://127.0.0.1:%d/__inject" % HTTP_PORT,
@@ -123,13 +127,26 @@ async def main():
                 assert "rewrite" in acts and "inject" in acts, acts
 
                 # 4. CLI 壳 (argparse -> HTTP) 可用性
-                cli = subprocess.run(
+                cli_clients = subprocess.run(
                     [PY, os.path.join(ROOT, "scripts", "inject.py"),
                      "--port", str(HTTP_PORT), "clients"],
                     capture_output=True, text=True, encoding="utf-8",
                     errors="replace", timeout=30, cwd=ROOT)
-                assert cli.returncode == 0, cli.stdout + cli.stderr
-                assert "clients=1" in cli.stdout, cli.stdout
+                assert cli_clients.returncode == 0, cli_clients.stdout + cli_clients.stderr
+                assert "clients=1" in cli_clients.stdout, cli_clients.stdout
+
+                # 5. CLI 注入 + --append (传统尾缀)
+                cli_banner = subprocess.run(
+                    [PY, os.path.join(ROOT, "scripts", "inject.py"),
+                     "--port", str(HTTP_PORT), "banner", "CLI 注入", "--append", " 喵~",
+                     "--sender", "王老师"],
+                    capture_output=True, text=True, encoding="utf-8",
+                    errors="replace", timeout=30, cwd=ROOT)
+                assert cli_banner.returncode == 0, cli_banner.stdout + cli_banner.stderr
+                assert "已注入: 1" in cli_banner.stdout, cli_banner.stdout
+                msg3 = await asyncio.wait_for(cli.receive(), 10)
+                got3 = json.loads(msg3.data)
+                assert got3.get("content") == "CLI 注入 喵~", got3
         ok = True
     finally:
         proxy.terminate()
@@ -146,7 +163,8 @@ async def main():
                 pass
 
     if ok:
-        print("[test_inject] PASS  (下行改写 / 帧注入 / 捕获环 全部通过)")
+        print("[test_inject] PASS  banner rewrite: '你好这是一次测试' -> %r" % banner_line)
+        print("[test_inject]       (下行改写 / 帧注入 / 捕获环 全部通过)")
         return 0
     print("[test_inject] FAIL")
     print("---- proxy output ----")
