@@ -15,27 +15,59 @@ def _run(cmd, timeout=15):
     return subprocess.run(cmd, capture_output=True, text=True,
                           errors="replace", timeout=timeout).stdout
 
-def _is_client_dir(d):
-    """目录是否像教室小喇叭的安装目录: 有 resources/app.asar + 非 Uninstall 的 exe"""
-    if not d or not os.path.isdir(d):
-        return False
-    if not os.path.isfile(os.path.join(d, "resources", "app.asar")):
-        return False
-    for exe in glob.glob(os.path.join(d, "*.exe")):
-        if "uninstall" not in os.path.basename(exe).lower():
-            return True
-    return False
-
-def _pick_exe(d):
-    """从安装目录挑主程序 exe (排除 Uninstall/卸载器)"""
+def _non_uninstall_exe(d):
     for exe in glob.glob(os.path.join(d, "*.exe")):
         if "uninstall" not in os.path.basename(exe).lower():
             return exe
     return None
 
+
+def _looks_like_jsxlb(d):
+    """特征校验: 避免误匹配其他 Electron 应用 (aDrive / Cloudflare 等)。
+    满足任一: 目录/exe 名含关键词, 或 app-update.yml / package.json 指向 810086。"""
+    keys = ("jsxlb", "教室", "小喇叭")
+    name = os.path.basename(d.rstrip("\\/")).lower()
+    if any(k in name for k in keys):
+        return True
+    exe = _non_uninstall_exe(d)
+    if exe and any(k in os.path.basename(exe).lower() for k in keys):
+        return True
+    for f in ("app-update.yml", "package.json"):
+        p = os.path.join(d, "resources", f)
+        if os.path.isfile(p):
+            try:
+                head = open(p, "rb").read(8192)
+            except OSError:
+                continue
+            if b"810086" in head or b"jsxlb" in head.lower():
+                return True
+    return False
+
+
+def _is_client_dir(d):
+    """目录是否为教室小喇叭安装目录: asar + 非卸载器 exe + 特征校验。"""
+    if not d or not os.path.isdir(d):
+        return False
+    if not os.path.isfile(os.path.join(d, "resources", "app.asar")):
+        return False
+    if not _non_uninstall_exe(d):
+        return False
+    return _looks_like_jsxlb(d)
+
+
+def _pick_exe(d):
+    """从安装目录挑主程序 exe (排除 Uninstall/卸载器)"""
+    return _non_uninstall_exe(d)
+
+
 def _from_env():
+    """显式指定 = 用户确认, 只做基本校验 (asar + exe), 不要求特征。"""
     d = os.environ.get("XLB_CLIENT_DIR", "").strip()
-    return d if d and _is_client_dir(d) else None
+    if d and os.path.isdir(d) \
+       and os.path.isfile(os.path.join(d, "resources", "app.asar")) \
+       and _non_uninstall_exe(d):
+        return d
+    return None
 
 def _from_registry():
     """查 NSIS/electron-builder 卸载注册表项 (HKLM/HKCU, 32/64 位树)"""

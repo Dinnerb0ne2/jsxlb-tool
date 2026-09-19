@@ -13,6 +13,10 @@
 | `py -3 scripts\rules.py show` | 查看当前生效规则 |
 | `py -3 scripts\rules.py add banner.replace "原文" "改文"` | 添加替换 (免手写 JSON/无转义) |
 | `py -3 scripts\rules.py flag debug.dry_run on` | 预演模式 (只打印不改写) |
+| `py -3 scripts\inject.py banner "文本" --sender 王老师` | 帧注入: 直接向大屏推横幅 (不经教师端) |
+| `py -3 scripts\inject.py clients` | 在线会话 + 捕获概况 |
+| `py -3 scripts\inject.py frames 50 --clear` | 看/清捕获环 (pass/rewrite/drop/inject) |
+| `py -3 scripts\watch.py` | 事件流监听 (tail -f, 只看关键事件) |
 | `py -3 scripts\netcheck.py` | 网络六步诊断 (hosts/公共DNS/系统DNS/DoH/出站/代理) |
 
 ## 看日志
@@ -64,7 +68,7 @@ py -3 scripts\netcheck.py
 
 ```json
 "timer": { "force_seconds": 0 },
-"block_ws_types": ["renderer.pack.push"],
+"block_ws_types": [],
 "passthrough": false
 ```
 
@@ -74,6 +78,8 @@ py -3 scripts\netcheck.py
 Resolve-DnsName xlb.810086.com                 # hosts 生效? 应 127.0.0.1
 Test-NetConnection 127.0.0.1 -Port 443          # 代理活着?
 py -3 scripts\netcheck.py                           # 全链路六步诊断
+curl http://127.0.0.1:8100/__status                  # 在线会话 / 捕获数 / 上游 IP
+curl "http://127.0.0.1:8100/__frames?n=20"            # 最近 20 条帧 (含动作标记)
 # 代理日志出现以下行 = 各环节 OK
 #   [ws] client connected          客户端进了代理
 #   [ws] upstream: wss://.../ws    代理连上真实服务器

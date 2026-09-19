@@ -1,5 +1,8 @@
 # -*- coding: utf-8 -*-
 """一键恢复: 停代理->关客户端->还原asar->删CA->清hosts (由 end.bat 提权后执行)。"""
+import os as _os, sys as _sys
+_sys.path.insert(0, _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))), "src"))
+import oplog
 import os
 import sys
 import shutil
@@ -62,4 +65,5 @@ def main():
     return 0
 
 if __name__ == "__main__":
+    oplog.op("run", oplog.run_arg())
     sys.exit(main())

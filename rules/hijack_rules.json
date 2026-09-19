@@ -1,47 +1,23 @@
 {
   "debug": {
-    "log_frames": false,
+    "log_frames": true,
     "dump_dir": "",
-    "dry_run": false
+    "dry_run": false,
+    "capture_max": 200
   },
   "banner": {
-    "types": [
-      "text",
-      "banner",
-      "notice",
-      "popup"
-    ],
+    "types": ["text", "banner", "notice"],
     "block_banner": false,
-    "replace": [
-      [
-        "你好这是一次测试",
-        "这不是测试"
-      ],
-      [
-        "1",
-        "2"
-      ],
-      [
-        "3",
-        "4"
-      ]
-    ],
-    "remove": [
-      "请家长签字"
-    ],
-    "append": "喵~~~",
+    "replace": [],
+    "remove": [],
+    "append": "",
     "force_sender": "",
     "force_tts": null
   },
   "seat": {
     "exclude": [],
     "only": [],
-    "pairs": [
-      [
-        "小明",
-        "小红"
-      ]
-    ]
+    "pairs": []
   },
   "timer": {
     "force_seconds": 0
@@ -54,9 +30,7 @@
     "block_traversal": true,
     "block": []
   },
-  "block_ws_types": [
-    "renderer.pack.push"
-  ],
+  "block_ws_types": [],
   "block_paths": [],
   "passthrough": false
 }

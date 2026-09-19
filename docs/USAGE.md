@@ -24,7 +24,7 @@ pip install aiohttp cryptography
 ```
 [1] 定位客户端安装目录 (注册表/常见路径/快捷方式/盘符扫描)
 [2] 清理残留客户端进程 (防止旧会话/幽灵窗口)
-[3] asar 补丁: 解包→8处 rejectUnauthorized:false→重打包 (原版备份 app.asar.bak)
+[3] asar 补丁: 8 处 rejectUnauthorized: true -> false (等长字节替换 + integrity 更新, 原版备份 app.asar.bak)
     - 已补丁则跳过 (大小对比判断, end 还原后会自动重打)
 [4] CA 信任: 自签 CA 装入 Windows 受信任根 (已信任则跳过)
 [5] hosts 劫持: 127.0.0.1 xlb.810086.com (已存在则跳过) + flushdns
@@ -49,6 +49,9 @@ pip install aiohttp cryptography
 | 重启代理 | `py -3 scripts\hijack_daemon.py restart` |
 | 带日志启动客户端 (排障) | `py -3 scripts\launch_log.py` → 日志 `logs\client_console.log` |
 | 网络四步诊断 | `py -3 scripts\netcheck.py` |
+| 帧注入 (不经教师端) | `py -3 scripts\inject.py banner "文本" --sender 王老师` |
+| 抓帧 / 看捕获 | `py -3 scripts\inject.py frames 50` |
+| 事件流监听 | `py -3 scripts\watch.py` |
 
 ## 三、一键恢复 (end)
 
@@ -76,6 +79,8 @@ pip install aiohttp cryptography
 仅补丁:     管理员运行 bin\hijack_patch.bat → py -3 src\patch_asar.py
 仅代理:     py -3 scripts\hijack_daemon.py start|stop|restart|status|reload
 仅客户端:   py -3 scripts\run_client.py
+帧注入:     py -3 scripts\inject.py banner "文本" --sender 老师
+事件监听:   py -3 scripts\watch.py
 定位客户端: py -3 src\client_locator.py    /    py -3 scripts\install_info.py
 ```
 
@@ -118,7 +123,8 @@ TTS 朗读与横幅同字段, 文本改后语音同步变。
 "block_ws_types": ["renderer.pack.push"]
 ```
 
-默认已开。可加 `"notification.push"` 等 (完整清单见 RULES_REFERENCE.md)。
+默认**空** (不封锁), 需要时按上面的写法加。匹配的是帧的 `payload.type` (完全匹配,
+以 `*` 结尾做前缀匹配如 `"desktop.update.*"`); 完整清单见 RULES_REFERENCE.md。
 
 ### 随机点名 / 座位规则
 
@@ -160,7 +166,29 @@ TTS 朗读与横幅同字段, 文本改后语音同步变。
 
 代理照常转发, 规则全部跳过 (连接/事件仍记日志)。
 
-## 六、恢复/撤销速查
+## 六、帧注入与抓帧 (直接向大屏推帧)
+
+不经教师端, 向代理里在线的教室大屏直推帧 —— 演示/验证"通道被完全控制"最直接的方式。
+
+```bash
+py -3 scripts\inject.py banner "今晚六点半自习" --sender 班主任 --seconds 60
+py -3 scripts\inject.py banner "临时通知" --tts on          # 带语音朗读
+py -3 scripts\inject.py safety "暑期安全" "不野泳, 不玩火"     # 每日安全全屏播报
+py -3 scripts\inject.py teacher "期末寄语" "稳住, 能赢"        # 班主任寄语全屏
+py -3 scripts\inject.py command lock_system                  # 远程控制命令
+py -3 scripts\inject.py raw @frame.json                      # 原样发任意帧 (最自由)
+py -3 scripts\inject.py raw - < frame.json                   # 从 stdin 读
+```
+
+- 默认原样下发; 加 `--apply-rules` 则注入帧也过规则引擎 (会被 replace/block 影响)
+- `inject.py clients` 在线会话数; `inject.py frames 50` 看最近 50 条捕获
+  (含 下行/上行/注入, 带 `pass/rewrite/drop/inject` 动作标记), `--clear` 清空
+- 捕获环只在内存, 长度 `debug.capture_max` (默认 200, 0 = 关闭); 长期归档用 `debug.dump_dir`
+- HTTP 接口 (`POST /__inject`, `GET /__frames` 等) 见 [RULES_REFERENCE.md](RULES_REFERENCE.md)
+
+> 注入要求"代理在线"; 没有客户端连进来时 `sent_to` 为 0。
+
+## 七、恢复/撤销速查
 
 | 想恢复什么 | 怎么做 |
 |---|---|
@@ -170,7 +198,7 @@ TTS 朗读与横幅同字段, 文本改后语音同步变。
 | 客户端被自动更新覆盖 | 重新双击 `start.bat` (补丁自动重打, 原版备份不会被覆盖) |
 | 迁移到新机器 | 整目录拷贝; 装好客户端后双击 `start.bat` |
 
-## 七、校园网 / DNS 被封怎么办
+## 八、校园网 / DNS 被封怎么办
 
 代理**不需要你配置 DNS**。它自带多层解析兜底链, 只要有一层能用就行:
 
@@ -190,7 +218,7 @@ py -3 scripts\netcheck.py     # 看第 [3] 步系统/校内 DNS 是否有 IP
 
 详细分析 → [CAMPUS_NETWORK.md](CAMPUS_NETWORK.md)
 
-## 八、故障排查入口
+## 九、故障排查入口
 
 | 症状 | 先看 |
 |---|---|

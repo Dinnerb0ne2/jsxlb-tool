@@ -7,6 +7,7 @@ import os
 import sys
 import time
 import glob
+import json
 import shutil
 import socket
 import subprocess
@@ -40,7 +41,7 @@ def run(cmd, **kw):
 
 def client_dir():
     """Locate client install dir (same logic as client_locator)."""
-    sys.path.insert(0, BIN)
+    sys.path.insert(0, SRC)
     try:
         from client_locator import locate
         d = locate()
@@ -72,7 +73,6 @@ def kill_client():
 def set_readonly(path, ro):
     try:
         import ctypes
-        attrs = 0x1 if ro else 0x0
         if ro:
             ctypes.windll.kernel32.SetFileAttributesW(path, 0x1)
         else:
@@ -81,14 +81,31 @@ def set_readonly(path, ro):
         pass
 
 def asar_patched(d):
-    """True if current asar differs from backup (i.e. already patched)."""
+    """已补丁 = main.js 区间内无 `rejectUnauthorized: true`。
+
+    不能用大小对比: 补丁是等长字节替换 (24B -> 24B), 原版与补丁版大小完全相同。
+    """
     asar = os.path.join(d, "resources", "app.asar")
-    bak = asar + ".bak"
     if not os.path.isfile(asar):
         return False
-    if not os.path.isfile(bak):
+    try:
+        import struct
+        with open(asar, "rb") as f:
+            u = struct.unpack("<4I", f.read(16))
+            json_size = u[3]
+            base = 8 + u[1]
+            hdr = json.loads(f.read(json_size).decode("utf-8"))
+        mj = hdr["files"]["main.js"]
+        off = base + int(mj["offset"])
+        size = int(mj["size"])
+        with open(asar, "rb") as f:
+            f.seek(off)
+            chunk = f.read(size)
+        return b"rejectUnauthorized: true" not in chunk
+    except Exception as e:
+        print("[!] asar check failed: %s" % e, file=sys.stderr)
         return False
-    return os.path.getsize(asar) != os.path.getsize(bak)
+
 
 def hosts_has():
     try:
@@ -157,18 +174,48 @@ def daemon(cmd, extra_env=None):
         env.update(extra_env)
     return run([sys.executable, os.path.join(SCRIPTS, "hijack_daemon.py"), cmd], env=env)
 
+def port_open(port, timeout=1):
+    """端口可连 = 有人在监听"""
+    try:
+        s = socket.create_connection(("127.0.0.1", port), timeout=timeout)
+        s.close()
+        return True
+    except OSError:
+        return False
+
 def wait_port_free(port, timeout=15):
     for _ in range(timeout):
-        try:
-            s = socket.create_connection(("127.0.0.1", port), timeout=1)
-            s.close()          # still accepting = occupied
-        except OSError:
+        if not port_open(port):
             return True
         time.sleep(1)
     return False
 
+def wait_port_open(port, timeout=15):
+    """等端口监听就绪 (真实探活, 用于验证代理是否真的起来了)"""
+    for _ in range(timeout):
+        if port_open(port):
+            return True
+        time.sleep(1)
+    return False
+
+def _is_foreign_listener(pid):
+    """True = 确定不是我们的代理 (命令行既无 hijack_proxy 也无 python)。
+    取不到命令行时返回 False (提权/权限限制场景, 保持旧行为按代理处理)。"""
+    try:
+        out = subprocess.run(
+            ["powershell", "-NoProfile", "-Command",
+             f"(Get-CimInstance Win32_Process -Filter \"ProcessId={pid}\").CommandLine"],
+            capture_output=True, text=True, timeout=10, errors="replace").stdout or ""
+    except Exception:
+        return False
+    out = out.strip().lower()
+    if not out:
+        return False
+    return ("hijack_proxy" not in out) and ("python" not in out)
+
 def kill_port_owners(ports=(443, 8100)):
-    """Kill any process LISTENING on the given ports (orphan proxies).
+    """Kill our orphan proxy processes LISTENING on the given ports.
+    安全阀: 命令行明确不是代理的进程只警告不杀 (防止误杀占用 443 的其它服务)。
     Returns list of killed PIDs. Needs admin (start/end run elevated)."""
     killed = []
     try:
@@ -186,6 +233,9 @@ def kill_port_owners(ports=(443, 8100)):
                     pids.add(int(parts[-1]))
     for pid in pids:
         if pid <= 4:
+            continue
+        if _is_foreign_listener(pid):
+            log("[!] 端口 %s 被非代理进程占用 (PID %d), 跳过不杀" % (list(ports), pid))
             continue
         run(["taskkill", "/F", "/PID", str(pid)])
         killed.append(pid)

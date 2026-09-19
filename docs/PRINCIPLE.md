@@ -52,8 +52,9 @@ new https.Agent({ rejectUnauthorized: true });
 环境变量挡不住显式 `true`, 所以自签证书会被拒 → 客户端死循环重连 ("未连接服务器")。
 
 **解决 (双轨)**:
-1. 解包 `app.asar`, 8 处 `rejectUnauthorized: true` → `false`, 重打包 (原版备份 app.asar.bak) —
-   覆盖 Node TLS 层 (axios/ws/https.request)
+1. 字节补丁 `app.asar`: 8 处 `rejectUnauthorized: true` → `rejectUnauthorized:false`
+   (两者都是 24 字节, **等长替换** + 更新 header 里的 integrity, 不解包/不重打包, 毫秒级;
+   原版备份为 app.asar.bak) — 覆盖 Node TLS 层 (axios/ws/https.request)
 2. 自签 CA 装入 Windows 受信任根 — 覆盖 Chromium 网络栈 (渲染进程 img/fetch 等)
 
 补丁与 CA 都由 start.bat 自动完成, end.bat 自动还原/删除。
@@ -87,7 +88,9 @@ ws_pump(客户端→服务器, 不改)
 ws_pump(服务器→客户端, 过规则引擎)
 ```
 
-规则引擎只对 `type: "broadcast.message"` 和 `class.data.*` 帧动手, 其他帧透传。
+服务器→客户端的**每一条文本帧都过规则引擎** (`transform_downlink`): 类型封锁
+(`block_ws_types`) 对任意 `payload.type` 生效, 横幅/命令/文件/计时器只命中对应类型,
+`class.data.*` 额外改内嵌座位与名单; 其余帧原样回发。
 
 ### HTTP 反向代理
 
@@ -115,7 +118,7 @@ ws_pump(服务器→客户端, 过规则引擎)
 ## 六、已验证的证据链
 
 ```
-[补丁]   asar 8 处 rejectUnauthorized: true -> false (重打包, 大小 36441414 vs 原版 36448906)
+[补丁]   asar 8 处 rejectUnauthorized: true -> false (等长字节替换 + integrity 更新, 0.16s)
 [TLS]    node rejectUnauthorized:true 客户端行为 + CA 信任 -> verify OK 200
 [hosts]  socket.gethostbyname('xlb.810086.com') -> 127.0.0.1
 [上游]   经代理 POST /api/v2/devices/register -> 官方 401 DEVICE_REGISTRATION_AUTH_MISSING

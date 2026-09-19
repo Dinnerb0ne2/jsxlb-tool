@@ -6,6 +6,7 @@
 用法: py -3 src/hijack_proxy.py [--upstream-ip IP] [--tls-port 443] [--http-port 8100]
 规则: POST http://127.0.0.1:8100/__rules (深合并); 见 rules/hijack_rules.json
 """
+import oplog
 import argparse
 import copy
 import json
@@ -26,11 +27,12 @@ RULES = {
     "debug": {
         "log_frames": False,        # True: 记录每个下行帧的 type (排障用)
         "dump_dir": "",             # 非空: 把下行帧 dump 成 json 文件到该目录
-        "dry_run": False            # True: 只记录"将要改写什么", 不真的改 (预演)
+        "dry_run": False,           # True: 只记录"将要改写什么", 不真的改 (预演)
+        "capture_max": 200          # 内存捕获环条数 (GET /__frames 可查; 0 = 关闭)
     },
     # ---------------- 横幅 ----------------
     "banner": {
-        "types": ["text", "banner", "notice", "popup"],   # 视为横幅的 messageType (可自定义)
+        "types": ["text", "banner", "notice"],       # 视为横幅的 messageType (保守默认; 需要时自行加 popup 等)
         "block_banner": False,            # 禁止横幅: 丢弃横幅帧
         "replace": [],                    # [["作业","自习"]] -> 替换特定词 (按序)
         "remove": [],                     # ["请家长签字"]  -> 删除某些话
@@ -68,6 +70,9 @@ ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 AIO = None
 ARGS = None
 UPSTREAM_IP = None   # 代理直连的真实服务器 IP (绕过 hosts, 防 MITM 自环)
+CLIENTS = set()      # 在线教室客户端 WS (帧注入的目标)
+CAPTURE = []         # 最近帧记录 (内存环, debug.capture_max 控制长度)
+STARTED_AT = None
 
 def log(s):
     print("[%s] %s" % (time.strftime("%H:%M:%S"), s), flush=True)
@@ -194,11 +199,6 @@ KNOWN_IPS = (
     "8.134.221.255",   # xlb.810086.com 历史解析结果 (最后兜底; 可能随上游变更而过期)
 )
 
-def doh_resolve(domain, timeout=8):
-    """DoH 单端点 (兼容旧调用)。"""
-    r = doh_resolve_multi(domain, timeout)
-    return r[0] if r else None
-
 def doh_resolve_multi(domain, timeout=6):
     """DoH (DNS over HTTPS) —— **用固定 IP 直连 + SNI**, 不依赖域名解析,
     因此不受 DNS 污染影响; 443 上做 TLS 证书验证还能挡住 DoH 服务器被冒充。
@@ -270,14 +270,19 @@ def resolve_upstream(domain, explicit_ip=None, cert_dir=".", verbose=False):
       2) TLS 证书验证 (系统 CA + 域名匹配) <- 污染假 IP 必被淘汰
     第一个通过证书验证的立即返回 (不做多余的后续解析, 启动快)。
     全部无验证通过时, 退回第一个 TCP 可达的候选 (带 unverified 警告)。
+    手动指定 (--upstream-ip / XLB_UPSTREAM_IP / rules/upstream_ip.txt) 直接短路返回 ——
+    操作者的显式指定优先于一切自动判断, 不做污染过滤与证书验证。
+
     返回 (ip|None, source, 候选列表)。
     """
+    if explicit_ip and str(explicit_ip).strip():
+        ip = str(explicit_ip).strip()
+        return ip, "manual", [ip]
+
     seen = set()
 
     def sources():
         """懒生成候选 (ip, source) —— 短路返回后不会继续解析后续层。"""
-        if explicit_ip:
-            yield str(explicit_ip).strip(), "manual"
         c_ip, _ = read_cached_upstream(cert_dir, domain)
         if c_ip:
             yield c_ip, "cached"
@@ -321,7 +326,7 @@ def resolve_upstream(domain, explicit_ip=None, cert_dir=".", verbose=False):
     if reachable:
         ip, src = reachable[0]
         return ip, "%s+reachable(unverified!)" % src, [ip]
-    return (None, "unresolved", []) if not seen else (None, "unresolved", [])
+    return None, "unresolved", []
 
 class FixedResolver(aiohttp.resolver.AbstractResolver):
     """把一切域名解析到候选 IP 列表 (首个探活通过的优先)。
@@ -334,7 +339,7 @@ class FixedResolver(aiohttp.resolver.AbstractResolver):
         if not self.ips:
             raise OSError(
                 "no upstream IP resolved; use --upstream-ip <真实IP> "
-                "or set XLB_UPSTREAM_IP=<真实IP> (run bin/netcheck.py to diagnose)"
+                "or set XLB_UPSTREAM_IP=<真实IP> (run scripts/netcheck.py to diagnose)"
             )
         return [{"hostname": host, "host": ip, "port": port,
                  "family": family, "proto": 0, "flags": socket.AI_NUMERICHOST}
@@ -438,6 +443,20 @@ def deep_merge(base, patch):
             base[k] = v
     return base
 
+def _type_match(t, pats):
+    """类型名匹配: 精确相等; 以 '*' 结尾时做前缀匹配 (如 desktop.update.*)。"""
+    t = str(t or "").lower()
+    if not t:
+        return False
+    for p in pats:
+        p = str(p or "").lower()
+        if p.endswith("*"):
+            if p[:-1] and t.startswith(p[:-1]):
+                return True
+        elif t == p:
+            return True
+    return False
+
 def _debug_frame(frame, direction="down"):
     """debug.log_frames / dump_dir: 记录或落盘每个帧。"""
     dbg = RULES.get("debug") or {}
@@ -459,9 +478,40 @@ def _debug_frame(frame, direction="down"):
     except Exception as e:
         log("  [debug] frame log error: %s" % e)
 
+def _frame_brief(frame):
+    """帧摘要: 类型 + 关键字段, 供捕获环 / 日志使用 (不写全帧)。"""
+    brief = {
+        "type": frame.get("type"),
+        "messageType": frame.get("messageType") or frame.get("message_type"),
+        "id": frame.get("messageId") or frame.get("message_id"),
+    }
+    for k in ("content", "command", "action", "fileName", "version", "signal"):
+        v = frame.get(k)
+        if v not in (None, ""):
+            brief[k] = str(v)[:120]
+    return brief
+
+def capture_add(direction, frame, action):
+    """记一条到内存捕获环 (debug.capture_max 条, 0 = 关闭)。永不抛异常。
+    direction: down=服务器->客户端, up=客户端->服务器, inject=本机注入。
+    action:    pass / rewrite / drop / up / inject。"""
+    try:
+        cmax = int((RULES.get("debug") or {}).get("capture_max") or 0)
+        if cmax <= 0:
+            return
+        entry = _frame_brief(frame)
+        entry["t"] = time.strftime("%H:%M:%S")
+        entry["dir"] = direction
+        entry["action"] = action
+        entry["raw"] = json.dumps(frame, ensure_ascii=False)[:1000]
+        CAPTURE.append(entry)
+        del CAPTURE[:-cmax]
+    except Exception:
+        pass
+
 def transform_broadcast_frame(frame):
-    """服务器->客户端 帧改写入口。返回 None = 丢弃该帧。
-    支持: 横幅改写/封锁, 计时器, 座位/名单, 桌面命令拦截, 文件拦截, debug/dry_run。"""
+    """下行帧改写入口 (broadcast.message 与 class.data.* 等任意 type)。返回 None = 丢弃该帧。
+    支持: 横幅改写/封锁, 计时器, 座位/名单, 桌面命令拦截, 文件拦截, 类型封锁, debug/dry_run。"""
     if RULES.get("passthrough"):
         return frame                     # 直通模式: 原样放行, 零干预
     r = RULES
@@ -470,7 +520,8 @@ def transform_broadcast_frame(frame):
     ftype = str(f.get("type") or "")
     dry = bool((r.get("debug") or {}).get("dry_run"))
 
-    if (r.get("debug") or {}).get("log_frames"):
+    if (r.get("debug") or {}).get("log_frames") \
+            or ((r.get("debug") or {}).get("dump_dir") or "").strip():
         _debug_frame(f, "down")
 
     def would(action):
@@ -480,12 +531,10 @@ def transform_broadcast_frame(frame):
             return False
         return True
 
-    # --- 类型级封锁 (任意 type) ---
-    if mtype in [str(t).lower() for t in (r.get("block_ws_types") or [])]:
-        log("BLOCK ws messageType=%s (禁止功能)" % mtype)
-        return None
-    if ftype.lower() in [str(t).lower() for t in (r.get("block_ws_types") or [])]:
-        log("BLOCK ws type=%s (禁止功能)" % ftype)
+    # --- 类型级封锁 (任意 type; 支持 desktop.update.* 这种前缀写法) ---
+    block_types = r.get("block_ws_types") or []
+    if _type_match(mtype, block_types) or _type_match(ftype, block_types):
+        log("BLOCK ws type=%s messageType=%s (禁止功能)" % (ftype, mtype))
         return None
 
     # --- 桌面控制命令拦截 ---
@@ -504,7 +553,7 @@ def transform_broadcast_frame(frame):
     if mtype == "file":
         fname = str(f.get("fileName") or f.get("file_name") or "")
         fm = r.get("files") or {}
-        if fm.get("block_traversal", True) and (".." in fname or "/" in fname or "\\" in fname):
+        if fm.get("block_traversal", True) and ".." in fname:
             log("BLOCK file=%r (路径穿越拦截)" % fname)
             return None
         for pat in (fm.get("block") or []):
@@ -513,8 +562,8 @@ def transform_broadcast_frame(frame):
                 return None
 
     # --- 横幅: 类型可配置 ---
-    banner_types = [str(t).lower() for t in ((r.get("banner") or {}).get("types") or ["text", "banner", "notice", "popup"])]
-    is_banner = mtype in banner_types
+    banner_types = ((r.get("banner") or {}).get("types") or ["text", "banner", "notice"])
+    is_banner = _type_match(mtype, banner_types)   # 与 block_ws_types 一致, 支持尾部 * 前缀匹配
 
     if is_banner and (r.get("banner") or {}).get("block_banner"):
         log("BLOCK banner frame id=%s (禁止横幅)" % f.get("messageId"))
@@ -555,7 +604,7 @@ def transform_broadcast_frame(frame):
             log("TIMER forced: %ss (frame id=%s)" % (secs, f.get("messageId")))
 
     # --- 班级数据帧: 内嵌座位表/学生名单改写 ---
-    if ftype in ("class.data.updated", "class.data.snapshot"):
+    if ftype.lower().startswith("class.data."):
         pushed = f.get("seatLayout") or f.get("seat_layout")
         if isinstance(pushed, dict) and isinstance(pushed.get("seats"), list):
             fake = {"data": {"seats": pushed["seats"]}}
@@ -682,6 +731,59 @@ async def proxy_http(request):
             log("RULES updated (deep-merge): %s" % json.dumps(RULES, ensure_ascii=False)[:300])
         return web.json_response(RULES)
 
+    if path == "/__status":
+        return web.json_response({
+            "clients": len(CLIENTS), "capture": len(CAPTURE), "startedAt": STARTED_AT,
+            "upstream": ARGS.upstream, "upstreamIp": UPSTREAM_IP,
+            "passthrough": bool(RULES.get("passthrough")),
+        })
+
+    if path == "/__clients":
+        return web.json_response({"clients": len(CLIENTS)})
+
+    if path == "/__frames":
+        try:
+            n = max(1, min(1000, int(request.query.get("n", "50"))))
+        except Exception:
+            n = 50
+        if request.query.get("clear") in ("1", "true", "yes"):
+            out = list(CAPTURE)
+            del CAPTURE[:]
+            return web.json_response({"count": 0, "cleared": len(out), "frames": out})
+        return web.json_response({"count": len(CAPTURE), "frames": CAPTURE[-n:]})
+
+    if path == "/__inject":
+        if request.method != "POST":
+            return web.json_response({"ok": False, "error": "POST only"}, status=405)
+        try:
+            body = await request.json()
+        except Exception as e:
+            return web.json_response({"ok": False, "error": "bad json: %s" % e}, status=400)
+        frame, apply_rules = build_frame(body)
+        if frame is None:
+            return web.json_response({"ok": False, "error": apply_rules}, status=400)
+        text = json.dumps(frame, ensure_ascii=False)
+        if apply_rules:
+            text = transform_downlink(text, direction="inject")   # 已进捕获环
+            if text is None:
+                return web.json_response({"ok": True, "sent_to": 0, "dropped": True,
+                                          "reason": "命中规则被丢弃"})
+            frame = json.loads(text)
+        sent, dead = 0, []
+        for c in list(CLIENTS):
+            try:
+                await c.send_str(text)
+                sent += 1
+            except Exception:
+                dead.append(c)
+        for c in dead:
+            CLIENTS.discard(c)
+        if not apply_rules:
+            capture_add("inject", frame, "inject")
+        log("INJECT -> %d client(s), 失效 %d: %s" % (
+            sent, len(dead), json.dumps(_frame_brief(frame), ensure_ascii=False)))
+        return web.json_response({"ok": True, "sent_to": sent, "frame": frame})
+
     passthrough = RULES.get("passthrough")
 
     for bp in ([] if passthrough else RULES["block_paths"]):
@@ -716,40 +818,126 @@ async def proxy_http(request):
         log("upstream error %s: %s" % (url, e))
         return web.json_response({"success": False, "message": "proxy upstream error"}, status=502)
 
+def build_frame(body):
+    """把注入请求补全成可发帧, 返回 (frame, apply_rules) 或 (None, 错误文本)。
+
+    三种形式:
+      {"frame": {...}}                     原样发帧 (自动补 messageId)
+      {"type": "renderer.pack.push", ...}  带 type 的非广播帧原样发帧
+      {"text"/"content": "..."}            简写: 组装 broadcast.message 横幅帧
+      {"command": "lock_system"}           简写: 组装远程控制命令帧
+    """
+    if not isinstance(body, dict):
+        return None, "body must be a JSON object"
+    apply_rules = bool(body.get("apply_rules"))
+    frame = body.get("frame")
+    if not isinstance(frame, dict):
+        if "type" in body and body.get("type") != "broadcast.message":
+            frame = {k: v for k, v in body.items() if k != "apply_rules"}
+        else:
+            content = body.get("content") or body.get("text") or body.get("message")
+            command = body.get("command")
+            if not content and not command:
+                return None, "需要 content/text/command 之一, 或直接给 frame"
+            mtype = body.get("messageType") or body.get("message_type")
+            frame = {"type": "broadcast.message"}
+            if command:
+                frame["messageType"] = mtype or "command"
+                frame["command"] = command
+            else:
+                frame["messageType"] = mtype or "text"
+                frame["content"] = content
+            seconds = body.get("seconds") or body.get("popup_duration") or body.get("popupDuration")
+            if seconds:
+                frame["popup_duration"] = int(seconds)
+                frame["popupDuration"] = int(seconds)
+            for k in ("sender", "senderRole", "senderAvatar", "displayMode", "title",
+                      "enableTTS", "source", "className"):
+                if k in body:
+                    frame[k] = body[k]
+            if "sender" in body and "senderRole" not in body:
+                frame["senderRole"] = "teacher"   # 客户端按 teacher 渲染名片卡片
+    frame = dict(frame)
+    if not (frame.get("messageId") or frame.get("message_id")):
+        frame["messageId"] = "inj" + str(int(time.time() * 1000))
+    return frame, apply_rules
+
+def transform_downlink(text, direction="down"):
+    """服务器->客户端 文本帧的统一入口: 所有 type 都过规则引擎。
+    (旧版只送 broadcast.message, 导致 block_ws_types 对其它类型永不命中,
+     class.data.* 内嵌座位改写不可达)。返回改写后文本; None = 丢弃该帧。
+    每个帧都进捕获环 (动作: pass / rewrite / drop)。"""
+    try:
+        frame = json.loads(text)
+    except Exception:
+        return text
+    if not isinstance(frame, dict):
+        return text
+    new = transform_broadcast_frame(frame)
+    if new is None:
+        log("frame DROPPED (type=%s id=%s)" % (frame.get("type"), frame.get("messageId")))
+        capture_add(direction, frame, "drop")
+        return None
+    capture_add(direction, new, "rewrite" if new != frame else "pass")
+    return json.dumps(new, ensure_ascii=False)
+
 # WebSocket 双向代理
+def capture_uplink(text):
+    """记录一条上行业务帧 (只记录, 不改: 上行零篡改不变)。"""
+    try:
+        frame = json.loads(text)
+        if isinstance(frame, dict):
+            capture_add("up", frame, "up")
+    except Exception:
+        pass
+
 async def ws_pump(src, dst, transform=False):
-    async for msg in src:
-        if msg.type == WSMsgType.TEXT:
-            if transform:
-                try:
-                    frame = json.loads(msg.data)
-                except Exception:
-                    await dst.send_str(msg.data); continue
-                if frame.get("type") == "broadcast.message":
-                    new = transform_broadcast_frame(frame)
-                    if new is None:
-                        log("frame DROPPED (id=%s)" % frame.get("messageId"))
-                        continue
-                    await dst.send_str(json.dumps(new, ensure_ascii=False))
-                    continue
-            await dst.send_str(msg.data)
-        elif msg.type == WSMsgType.BINARY:
-            await dst.send_bytes(msg.data)
-        elif msg.type in (WSMsgType.CLOSE, WSMsgType.CLOSING, WSMsgType.ERROR):
-            break
-    await dst.close()
+    """单方向泵。transform=True (服务器->客户端) 过规则引擎;
+    transform=False (客户端->服务器) 原样透传, 仅记录捕获。"""
+    try:
+        async for msg in src:
+            if msg.type == WSMsgType.TEXT:
+                if transform:
+                    out = transform_downlink(msg.data)
+                    if out is not None:
+                        await dst.send_str(out)
+                else:
+                    capture_uplink(msg.data)
+                    await dst.send_str(msg.data)
+            elif msg.type == WSMsgType.BINARY:
+                await dst.send_bytes(msg.data)
+            elif msg.type in (WSMsgType.CLOSE, WSMsgType.CLOSING, WSMsgType.ERROR):
+                break
+    except Exception as e:
+        log("[ws] pump error: %s: %s" % (type(e).__name__, e))
+    finally:
+        try:
+            await dst.close()
+        except Exception:
+            pass
 
 async def proxy_ws(request):
     upstream = "%s/ws" % ARGS.upstream.replace("http", "ws", 1).rstrip("/")
     client_ws = web.WebSocketResponse()
     await client_ws.prepare(request)
-    log("[ws] client connected (%s)" % request.remote)
-    async with AIO.ws_connect(upstream, ssl=AIO_ssl_ctx) as server_ws:
-        log("[ws] upstream: %s" % upstream)
-        t1 = asyncio.create_task(ws_pump(client_ws, server_ws, transform=False))
-        t2 = asyncio.create_task(ws_pump(server_ws, client_ws, transform=True))
-        await asyncio.gather(t1, t2, return_exceptions=True)
-    log("[ws] session ended")
+    CLIENTS.add(client_ws)          # 先注册: 上游不可用时注入仍可用
+    log("[ws] client connected (%s), clients=%d" % (request.remote, len(CLIENTS)))
+    kwargs = {"ssl": AIO_ssl_ctx} if upstream.startswith("wss") else {}
+    try:
+        async with AIO.ws_connect(upstream, **kwargs) as server_ws:
+            log("[ws] upstream: %s" % upstream)
+            t1 = asyncio.create_task(ws_pump(client_ws, server_ws, transform=False))
+            t2 = asyncio.create_task(ws_pump(server_ws, client_ws, transform=True))
+            await asyncio.gather(t1, t2, return_exceptions=True)
+    except Exception as e:
+        log("[ws] upstream connect failed: %s: %s" % (type(e).__name__, e))
+    finally:
+        CLIENTS.discard(client_ws)
+        try:
+            await client_ws.close()
+        except Exception:
+            pass
+    log("[ws] session ended, clients=%d" % len(CLIENTS))
     return client_ws
 
 # HTTP 响应改写调度 (座位表 + 学生名单)
@@ -758,10 +946,11 @@ def transform_http_json(path, payload):
     if RULES.get("passthrough"):
         return payload, False
     # 座位表显示数据 (main.js:10518 /api/v2/seats/display/<classId>)
-    if "/seats/display" in path or "/seats" in path:
+    if "/seats" in path:
         return transform_seat_data(payload)
     # 学生名单 (main.js:10245 /api/v2/students?classId=) -> 随机点名黑/白名单
-    if path.rstrip("/").endswith("/students") or "/students?" in path:
+    # 注意: rel_url.path 不含 query, 所以按路径结尾判断 (旧版 "/students?" 分支永不命中)
+    if path.rstrip("/").endswith("/students"):
         data = payload.get("data")
         if payload.get("success") is True and isinstance(data, list):
             new, ch = apply_student_rules(data)
@@ -809,10 +998,12 @@ def selftest():
     seats2 = [{"student_name": "丁", "row_number": 1, "col_number": 3}]
     transform_seat_data({"data": {"seats": seats2}})
     assert seats2[0]["seat_type"] == "empty"
-    # 6 学生名单黑名单
+    # 6 学生名单黑名单 (真实 path 不含 query) + 相近路径不误伤
     payload = {"success": True, "data": [{"name": "丁"}, {"name": "戊"}]}
-    p2, ch = transform_http_json("/api/v2/students?classId=10001", payload)
+    p2, ch = transform_http_json("/api/v2/students", payload)
     assert ch and [s["name"] for s in p2["data"]] == ["戊"], p2
+    _p3, _ch3 = transform_http_json("/api/v2/students/export", {"success": True, "data": [{"name": "丁"}]})
+    assert not _ch3, "非名单路径不应改写"
     setr(seat={"exclude": [], "only": [], "pairs": []})
     # 7 直通模式
     RULES["passthrough"] = True
@@ -845,15 +1036,80 @@ def selftest():
     out = transform_broadcast_frame({"messageType": "text", "messageId": "t11", "content": "秘密内容"})
     assert out["content"] == "秘密内容", "dry_run 不应真的改写"
     setr(debug={"dry_run": False, "log_frames": False, "dump_dir": ""})
+    # 12 任意 type 的封锁 (旧版只把 broadcast.message 送进规则引擎 -> 该规则永不命中)
+    setr(block_ws_types=["renderer.pack.push"])
+    assert transform_downlink(json.dumps({"type": "renderer.pack.push", "version": 3})) is None
+    assert transform_downlink(json.dumps({"type": "pong"})) is not None
+    assert transform_downlink("not-json") == "not-json"
+    # 13 尾部 * 前缀匹配
+    setr(block_ws_types=["desktop.update.*"])
+    assert transform_downlink(json.dumps({"type": "desktop.update.force"})) is None
+    setr(block_ws_types=[])
+    # 14 class.data.* 帧内嵌座位改写 (旧版不可达)
+    setr(seat={"exclude": ["丁"], "only": [], "pairs": []})
+    frame = json.loads(transform_downlink(json.dumps({"type": "class.data.updated", "data": {
+        "seatLayout": {"seats": [{"student_name": "丁", "row_number": 1, "col_number": 1}]}}})))
+    assert frame["data"]["seatLayout"]["seats"][0]["seat_type"] == "empty", frame
+    setr(seat={"exclude": [], "only": [], "pairs": []})
+    # 15 注入帧组装 (简写横幅 / 命令 / 原始帧 / apply_rules)
+    f, opt = build_frame({"text": "注入测试", "sender": "王老师", "seconds": 30})
+    assert f["type"] == "broadcast.message" and f["content"] == "注入测试", f
+    assert f["messageType"] == "text" and f["senderRole"] == "teacher", f
+    assert f["popup_duration"] == 30 and f["popupDuration"] == 30 and f["messageId"], f
+    assert opt is False
+    f, opt = build_frame({"command": "lock_system"})
+    assert f["messageType"] == "command" and f["command"] == "lock_system", f
+    f, opt = build_frame({"frame": {"type": "renderer.pack.push", "version": 9}, "apply_rules": True})
+    assert f["type"] == "renderer.pack.push" and opt is True, (f, opt)
+    assert build_frame({"nothing": 1})[0] is None
+    # 16 banner.types 支持尾部 * 前缀匹配
+    setr(banner={"types": ["notice*"], "block_banner": False, "replace": [["a", "b"]],
+                 "remove": [], "append": "", "force_sender": "", "force_tts": None})
+    out = transform_broadcast_frame({"messageType": "notice.popup", "messageId": "t15", "content": "a"})
+    assert out["content"] == "b", out
+    setr(banner={"types": ["text", "banner", "notice"]})
+    # 17 捕获环: 动作标记 (rewrite / pass / drop)
+    setr(debug={"dry_run": False, "log_frames": False, "dump_dir": "", "capture_max": 10})
+    setr(block_ws_types=[])
+    del CAPTURE[:]
+    transform_downlink(json.dumps({"type": "broadcast.message", "messageType": "text", "messageId": "c1", "content": "a"}))
+    transform_downlink(json.dumps({"type": "pong"}))
+    setr(block_ws_types=["renderer.pack.push"])
+    transform_downlink(json.dumps({"type": "renderer.pack.push", "version": 1}))
+    setr(block_ws_types=[])
+    assert [e["action"] for e in CAPTURE] == ["rewrite", "pass", "drop"], CAPTURE
+    # 18 捕获环按 capture_max 截断; 0 = 关闭
+    setr(debug={"capture_max": 2})
+    for _i in range(5):
+        transform_downlink(json.dumps({"type": "pong"}))
+    assert len(CAPTURE) == 2, len(CAPTURE)
+    setr(debug={"capture_max": 0})
+    transform_downlink(json.dumps({"type": "pong"}))
+    assert len(CAPTURE) == 2, "capture_max=0 应停止记录"
+    # 19 dump_dir 单独生效 (旧版被 log_frames 门禁卡死)
+    import tempfile
+    _d = tempfile.mkdtemp(prefix="xlb_dump_")
+    setr(debug={"dry_run": False, "log_frames": False, "dump_dir": _d})
+    transform_broadcast_frame({"type": "broadcast.message", "messageType": "text", "messageId": "d1", "content": "z"})
+    assert os.listdir(_d), "dump_dir 在 log_frames 关闭时也必须落盘"
+    setr(debug={"dry_run": False, "log_frames": False, "dump_dir": "", "capture_max": 200})
+    del CAPTURE[:]
+    # 20 手动上游 IP 权威短路 (不做污染过滤/证书验证)
+    _ip, _src, _cands = resolve_upstream("xlb.810086.com", explicit_ip="203.0.113.9")
+    assert _ip == "203.0.113.9" and _src == "manual" and _cands == ["203.0.113.9"], (_ip, _src, _cands)
     print("[selftest] ALL PASS")
     RULES["timer"]["force_seconds"] = 0
     RULES["seat"] = {"exclude": [], "only": [], "pairs": []}
 
 async def main():
-    global AIO, AIO_ssl_ctx
+    oplog.op("start", oplog.run_arg())
+    global AIO, AIO_ssl_ctx, STARTED_AT
+    STARTED_AT = time.strftime("%Y-%m-%d %H:%M:%S")
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", default="0.0.0.0",
                         help="0.0.0.0 = 接收同网段被欺骗过来的流量")
+    parser.add_argument("--admin-host", default="127.0.0.1",
+                        help="明文端口(规则/注入 API)绑定地址; 默认只本机, 需给同网段客户端用则改 0.0.0.0")
     parser.add_argument("--http-port", type=int, default=8100, help="明文端口(环境变量模式/规则管理)")
     parser.add_argument("--tls-port", type=int, default=443, help="TLS 端口(MITM 模式, 0=不开)")
     parser.add_argument("--upstream", default="https://xlb.810086.com",
@@ -900,7 +1156,7 @@ async def main():
         log("    -> 校园网常拦截对外 DNS。解决办法: 手动指定真实 IP")
         log("      启动时加参数:  --upstream-ip <真实IP>")
         log("      或设环境变量:  set XLB_UPSTREAM_IP=<真实IP>")
-        log("    -> 代理仍会启动 (客户端可连入, 但无法回源); 先跑 py -3 bin/netcheck.py 诊断")
+        log("    -> 代理仍会启动 (客户端可连入, 但无法回源); 先跑 py -3 scripts/netcheck.py 诊断")
 
     up_ctx = ssl.create_default_context()
     up_ctx.check_hostname = False
@@ -917,8 +1173,8 @@ async def main():
 
     runner = web.AppRunner(app)
     await runner.setup()
-    await web.TCPSite(runner, ARGS.host, ARGS.http_port).start()
-    log("plain http : %s:%d  (环境变量模式 / 规则管理)" % (ARGS.host, ARGS.http_port))
+    await web.TCPSite(runner, ARGS.admin_host, ARGS.http_port).start()
+    log("plain http : %s:%d  (规则/注入 API; --admin-host 可改绑定)" % (ARGS.admin_host, ARGS.http_port))
 
     if ARGS.tls_port > 0:
         cert = os.path.join(ARGS.cert_dir, "hijack_cert.pem")

@@ -139,6 +139,8 @@ TIMER forced: Ns             计时器被强改
 SEAT pair/exclude            座位规则执行
 STUDENTS rewritten           点名名单改写
 upstream error               代理到真实服务器断连
+INJECT -> N client(s)        帧注入下发 (不经教师端)
+[ws] upstream connect failed  客户端连入但代理连不上上游 (注入仍可用)
 ```
 
 ## 代理自身日志等级
@@ -146,3 +148,14 @@ upstream error               代理到真实服务器断连
 `hijack_proxy.py` 每次改写/丢帧都打印。若需更细 (看透传帧内容),
 可在 `transform_broadcast_frame` 前加临时 debug 打印, 或在 `ws_pump` 里对
 非 broadcast 帧也打 `[tx] <type>`。排查完删除, 避免日志刷屏。
+
+## 注入没反应 / 捕获为空
+
+| 症状 | 原因 | 处理 |
+|---|---|---|
+| `inject.py` 报"代理不可达" | 代理没跑, 或端口不是 8100 | `py -3 scripts\hijack_daemon.py status`; 自定义端口加 `--port` |
+| `sent_to=0` | 没有客户端连在代理上 | 看 `__status.clients`; 双击 `start.bat` 并确认客户端已连上代理 |
+| 注入被丢弃 | 加了 `--apply-rules` 且命中 block 规则 | 看 `INJECT` / `frame DROPPED` 日志; 去掉 `--apply-rules` 或改规则 |
+| `frames` 为空 | `debug.capture_max` = 0, 或热更后没新流量 | 设回 `200` + `reload`, 然后触发一条横幅/注入 |
+| 注入 API 外部访问不到 | 明文端口默认只绑 127.0.0.1 (安全默认) | 需给同网段用时: 代理加 `--admin-host 0.0.0.0` |
+| 捕获里看不到上行帧 | 上行记录也受 `capture_max` 限制 | 同上 |

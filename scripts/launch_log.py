@@ -1,5 +1,8 @@
 # -*- coding: utf-8 -*-
 """带日志启动客户端 (排障用), 日志写 logs/client_console.log。"""
+import os as _os, sys as _sys
+_sys.path.insert(0, _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))), "src"))
+import oplog
 import os
 import sys
 import glob
@@ -27,4 +30,5 @@ def main():
     print("[+] client launched with logging (pid %d) -> %s" % (p.pid, LOG))
 
 if __name__ == "__main__":
+    oplog.op("run", oplog.run_arg())
     main()

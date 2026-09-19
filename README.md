@@ -23,6 +23,9 @@
 | 改规则后热更新 | 编辑 `rules\hijack_rules.json` → `py -3 scripts\hijack_daemon.py reload` |
 | 停代理 | `py -3 scripts\hijack_daemon.py stop` |
 | 网络诊断 | `py -3 scripts\netcheck.py` (hosts/DNS污染/出站/代理 四步可验证) |
+| 帧注入 (不经教师端) | `py -3 scripts\inject.py banner "文本" --sender 王老师` |
+| 抓帧/回看 | `py -3 scripts\inject.py frames 50` (pass/rewrite/drop 动作标记) |
+| 事件流监听 | `py -3 scripts\watch.py` (tail -f, 只看关键事件) |
 
 ## 功能一览
 
@@ -31,13 +34,15 @@
 | 横幅文本替换/删除/尾部追加/改发件人 | `banner.replace[] / remove[] / append / force_sender` |
 | 多组替换 (1→2, 3→4 …) | `banner.replace` 多对, 按序执行 |
 | 禁止横幅 | `banner.block_banner: true` |
-| 禁止热更新/汉化包下发 | `block_ws_types: ["renderer.pack.push"]` (默认开) |
+| 禁止热更新/汉化包下发 | `block_ws_types: ["renderer.pack.push"]` (默认空, 需要时加) |
 | xx 和 xx 永远坐在一起 | `seat.pairs: [["小明","小红"]]` |
 | 某人永不被随机点名 | `seat.exclude: ["张三"]` |
 | 只抽指定的人 | `seat.only: ["李四"]` |
 | 改横幅自动关闭时长 | `timer.force_seconds: 9999` |
 | 封锁任意 API | `block_paths: ["/api/v2/xxx"]` |
 | 代理在但不干预 (低调) | `passthrough: true` |
+| 直推横幅/命令 (不经教师端) | `py -3 scripts\inject.py ...` 或 `POST /__inject` |
+| 会话/帧捕获 (内存环) | `debug.capture_max` (默认 200) + `GET /__frames` |
 
 ## 目录结构
 
@@ -55,13 +60,18 @@ jsxlb/                          ← 本工具链根 (整体拷贝可迁移)
 │   ├── ctl_start.py / ctl_end.py   一键开启 / 恢复流程
 │   ├── hijack_daemon.py        代理控制器 (start/stop/status/reload)
 │   ├── rules.py                规则 CLI (免手写 JSON, 无转义烦恼)
+│   ├── inject.py               帧注入 CLI (banner/safety/teacher/command/raw/frames)
+│   ├── watch.py                事件流监听 (tail -f, 只看关键事件)
 │   ├── netcheck.py             网络诊断 (六步, 含抗污染验证)
 │   ├── run_client.py / launch_log.py   启动客户端
 │   └── install_info.py         打印客户端路径
 ├── bin/                        一键脚本 (bat, 双击运行)
 │   ├── hijack_on.bat / hijack_off.bat / hijack_patch.bat
-│   ├── status.bat              状态一览
+│   ├── status.bat              状态一览 (含在线会话/捕获数)
+│   ├── netcheck.bat / inject.bat   网络诊断 / 帧注入快捷入口
 │   └── start_all_silent.bat / stop_proxy_silent.bat
+├── testsuite/
+│   └── test_inject.py          集成测试 (假上游 + 真代理 + 注入/捕获断言)
 ├── rules/
 │   ├── hijack_rules.json       劫持规则 (运行中热更新)
 │   └── upstream_ip.txt         上游真实 IP 手动兜底 (校园网 DNS 全封时用, 平时空)
@@ -85,6 +95,7 @@ jsxlb/                          ← 本工具链根 (整体拷贝可迁移)
 
 | 需求 | 文档 |
 |---|---|
+| 接手项目先看 | [docs/HANDOVER.md](docs/HANDOVER.md) |
 | 命令速查 | [docs/CHEATSHEET.md](docs/CHEATSHEET.md) |
 | 怎么做到的 | [docs/PRINCIPLE.md](docs/PRINCIPLE.md) |
 | 完整攻击分析 (WP) | [docs/WRITEUP.md](docs/WRITEUP.md) |

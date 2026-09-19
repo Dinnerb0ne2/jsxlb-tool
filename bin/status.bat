@@ -20,5 +20,9 @@ netstat -ano | findstr :443 | findstr ESTABLISHED | findstr 127.0.0.1 && echo [O
 
 echo.
 echo === 5. last rewrite events ===
-powershell -NoProfile -Command "Get-Content '%~dp0..\logs\hijack_proxy.log' -Tail 200 | Select-String 'BANNER|DROPPED|TIMER|SEAT|STUDENTS|BLOCK' | Select-Object -Last 8"
+powershell -NoProfile -Command "Get-Content '%~dp0..\logs\hijack_proxy.log' -Tail 200 | Select-String 'BANNER|DROPPED|TIMER|SEAT|STUDENTS|BLOCK|INJECT' | Select-Object -Last 8"
+
+echo.
+echo === 6. live status (rules API) ===
+curl -s --max-time 3 http://127.0.0.1:8100/__status && echo. || echo [!] rules API unreachable
 pause

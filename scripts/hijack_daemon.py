@@ -3,6 +3,9 @@
 
   start|stop|restart|status|reload
 """
+import os as _os, sys as _sys
+_sys.path.insert(0, _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))), "src"))
+import oplog
 import os, sys, subprocess, glob, json, urllib.request, socket, time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -99,7 +102,10 @@ def start():
     python = sys.executable
     # build command:  python hijack_proxy.py --host 0.0.0.0 --tls-port 443 --http-port 8100
     cmd = [python, PROXY, "--host", "0.0.0.0", "--tls-port", "443", "--http-port", "8100"]
-    logf = open(LOGFILE, "w", encoding="utf-8", errors="replace")
+    # 追加模式: 保留历史日志 (重启前的连接/改写记录可用于事后诊断)
+    logf = open(LOGFILE, "a", encoding="utf-8", errors="replace")
+    logf.write("\n---- proxy start %s ----\n" % time.strftime("%Y-%m-%d %H:%M:%S"))
+    logf.flush()
     p = subprocess.Popen(cmd, stdout=logf, stderr=subprocess.STDOUT,
                          cwd=ROOT, creationflags=DETACHED, close_fds=True)
     with open(PIDFILE, "w") as f:
@@ -115,7 +121,7 @@ def stop():
         except OSError:
             pass
         return
-    # graceful: send Ctrl-Break to process group first, then hard kill
+    # 直接强杀: 代理无持久状态可丢, 端口释放由 start 前的 wait_ports_free 兜底
     subprocess.run(["taskkill", "/F", "/PID", str(pid)],
                    capture_output=True)
     try:
@@ -130,6 +136,12 @@ def status():
     print("proxy:", "RUNNING (PID %d)" % pid if alive else "STOPPED")
     if alive:
         try:
+            s = json.load(urllib.request.urlopen("http://127.0.0.1:8100/__status", timeout=5))
+            print("clients: %d  capture: %d  upstream: %s"
+                  % (s.get("clients", 0), s.get("capture", 0), s.get("upstreamIp") or "?"))
+        except Exception:
+            pass
+        try:
             r = json.load(urllib.request.urlopen("http://127.0.0.1:8100/__rules", timeout=5))
             print("rules: passthrough=%s  replace=%d  pairs=%d  append=%r"
                   % (r.get("passthrough"), len(r["banner"]["replace"]),
@@ -140,7 +152,8 @@ def status():
     try:
         lines = open(LOGFILE, encoding="utf-8", errors="replace").read().splitlines()
         events = [l for l in lines if any(k in l for k in
-                  ("BANNER", "DROPPED", "TIMER", "SEAT", "STUDENTS", "BLOCK", "client connected"))]
+                  ("BANNER", "DROPPED", "TIMER", "SEAT", "STUDENTS", "BLOCK", "INJECT",
+                   "RULES updated", "client connected"))]
         print("--- last events ---")
         for l in events[-6:]:
             print(" ", l)
@@ -164,6 +177,7 @@ def restart():
 
 def main():
     action = sys.argv[1] if len(sys.argv) > 1 else "status"
+    oplog.op(action)
     {"start": start, "stop": stop, "restart": restart,
      "status": status, "reload": reload}.get(action, status)()
 

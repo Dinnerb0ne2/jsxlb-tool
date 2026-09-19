@@ -5,6 +5,7 @@
 长度相同 (24B), 直接字节替换 + 更新 integrity, 毫秒级, 无需 Node.js。
 回退: 找不到时用 npx @electron/asar 解包重打包。原版备份 app.asar.bak。
 """
+import oplog
 import os
 import sys
 import json
@@ -185,4 +186,5 @@ def main():
         read_only(asar, True)
 
 if __name__ == "__main__":
+    oplog.op("run", oplog.run_arg())
     sys.exit(main())

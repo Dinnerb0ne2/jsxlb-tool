@@ -4,6 +4,9 @@
   show | get <路径> | set <路径> <值> | add <路径> <值...>
   del <路径> <索引> | rm <路径> | flag <路径> on|off | reload | apply | reset
 """
+import os as _os, sys as _sys
+_sys.path.insert(0, _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))), "src"))
+import oplog
 import os
 import sys
 import json
@@ -20,13 +23,13 @@ API = "http://127.0.0.1:8100/__rules"
 
 DEFAULT = {
     "debug": {"log_frames": False, "dump_dir": "", "dry_run": False},
-    "banner": {"types": ["text", "banner", "notice", "popup"], "block_banner": False,
+    "banner": {"types": ["text", "banner", "notice"], "block_banner": False,
                "replace": [], "remove": [], "append": "", "force_sender": "", "force_tts": None},
     "seat": {"exclude": [], "only": [], "pairs": []},
     "timer": {"force_seconds": 0},
     "commands": {"block": [], "block_snapshot": False},
     "files": {"block_traversal": True, "block": []},
-    "block_ws_types": ["renderer.pack.push"],
+    "block_ws_types": [],
     "block_paths": [],
     "passthrough": False,
 }
@@ -193,7 +196,6 @@ def main():
         return 0
 
     if cmd == "reload":
-        rules, _ = load_live_or_file()   # 不需要, 直接推文件
         rules = load_file()
         log("[i] 推 %s" % RULES_FILE)
         push_rules(rules)
@@ -218,4 +220,5 @@ def main():
     return 1
 
 if __name__ == "__main__":
+    oplog.op("run", oplog.run_arg())
     sys.exit(main())

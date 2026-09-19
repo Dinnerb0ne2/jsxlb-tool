@@ -3,6 +3,9 @@
 
 六步: 本机解析, 公共UDP DNS, 系统DNS, DoH, 候选IP证书验证, 本机代理。
 """
+import os as _os, sys as _sys
+_sys.path.insert(0, _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))), "src"))
+import oplog
 import os
 import ssl
 import sys
@@ -50,26 +53,6 @@ def raw_dns(domain, server, timeout=4):
 def system_dns(domain):
     try:
         return sorted({sa[0] for _, _, _, _, sa in socket.getaddrinfo(domain, 443, socket.AF_INET)})
-    except Exception as e:
-        return ["FAIL: %s" % e]
-
-def doh(domain, host="dns.alidns.com", path="/resolve", timeout=8):
-    try:
-        ctx = ssl.create_default_context()
-        s = socket.create_connection((host, 443), timeout=timeout)
-        ss = ctx.wrap_socket(s, server_hostname=host)
-        ss.sendall(("GET %s?name=%s&type=A HTTP/1.1\r\nHost: %s\r\n"
-                    "Accept: application/dns-json\r\nConnection: close\r\n\r\n"
-                    % (path, domain, host)).encode())
-        data = b""
-        while True:
-            c = ss.recv(4096)
-            if not c:
-                break
-            data += c
-        ss.close()
-        j = json.loads(data.split(b"\r\n\r\n", 1)[1].decode("utf-8", "replace"))
-        return [a["data"] for a in (j.get("Answer") or []) if a.get("type") == 1]
     except Exception as e:
         return ["FAIL: %s" % e]
 
@@ -223,4 +206,5 @@ def main():
         print("  [注意] 即使指定 IP, 443 也不可达 -> 是校园网出站封锁, 非本工具问题。")
 
 if __name__ == "__main__":
+    oplog.op("run", oplog.run_arg())
     main()

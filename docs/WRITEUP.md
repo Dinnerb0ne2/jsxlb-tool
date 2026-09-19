@@ -66,7 +66,8 @@ rejectUnauthorized: true
 
 → 全局变量在这些路径上**无效**。自签证书被拒 → 客户端 WS 反复重连 (日志 186 次失败)。
 
-**利用方式**: 解包 app.asar → 将全部 8 处 `rejectUnauthorized: true` 改 `false` → 重打包 (备份原文件)。
+**利用方式**: 字节补丁 app.asar — 全部 8 处 `rejectUnauthorized: true` 改 `false`
+(两者均为 24 字节, 等长替换 + 更新 integrity, 不解包; 备份原文件为 app.asar.bak)。
 
 ### 2.2 DNS-1: 服务器地址无域名钉扎
 
@@ -141,7 +142,7 @@ Windows cmd 引号规则下 `\"` 不闭合, `&` 可 break out。
 | 步骤 | 动作 | 脚本 |
 |---|---|---|
 | 1 | 定位客户端安装目录 (注册表/路径/快捷方式/扫描) | `client_locator.py` |
-| 2 | 解包 asar → 8 处 `rejectUnauthorized:false` → 重打包 | `patch_asar.py` |
+| 2 | asar 等长字节替换: 8 处 `rejectUnauthorized: true` → `false` + 更新 integrity (0.16s) | `patch_asar.py` |
 | 3 | 生成 CA + 签发 `xlb.810086.com` 服务器证书 | `hijack_proxy.py` 首次运行 |
 | 4 | CA 装入 Windows 受信任根存储 | `ctl_start.py` |
 | 5 | hosts 加 `127.0.0.1 xlb.810086.com` | `ctl_start.py` |

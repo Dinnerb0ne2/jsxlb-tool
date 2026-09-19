@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
 """一键开启: 定位->补丁->CA->hosts->代理->客户端 (由 start.bat 提权后执行)。"""
+import os as _os, sys as _sys
+_sys.path.insert(0, _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))), "src"))
+import oplog
 import os
 import sys
-import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "src"))
@@ -66,12 +68,11 @@ def main():
         C.log("[6] using manual upstream IP: %s" % up_ip)
     r = C.daemon("start", extra_env=env)
     C.log("[6] proxy daemon start issued")
-    time.sleep(4)
-    # verify listening
-    if not C.wait_port_free(443, timeout=0):
+    # 真实探活: 443 能连上才算起来了 (旧写法 wait_port_free(443, 0) 循环不执行, 恒报 OK)
+    if C.wait_port_open(443, timeout=15):
         C.log("[6] proxy listening on 443: OK")
     else:
-        C.log("[!] proxy NOT listening on 443")
+        C.log("[!] proxy NOT listening on 443 (见 logs/hijack_proxy.log)")
         return 1
 
     # 7. launch client (silent)
@@ -90,4 +91,5 @@ def main():
     return 0
 
 if __name__ == "__main__":
+    oplog.op("run", oplog.run_arg())
     sys.exit(main())

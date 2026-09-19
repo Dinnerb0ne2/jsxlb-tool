@@ -29,7 +29,7 @@
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
-| `types` | `["text",...]` | 视为横幅的 messageType (默认 text/banner/notice/popup) |
+| `types` | `["text",...]` | 视为横幅的 messageType (默认 text/banner/notice; 支持尾部 `*` 前缀匹配如 `notice*`; 需要 popup 等自行加) |
 | `block_banner` | bool | `true` = 丢弃一切横幅帧 (禁止横幅) |
 | `replace` | `[["原文","改文"],...]` | 依序替换特定词 |
 | `remove` | `["某话",...]` | 删除某些话 (直接删除子串) |
@@ -48,6 +48,7 @@
 | `log_frames` | bool | `true` = 记录每个下行帧的 type/messageType/id (排障) |
 | `dump_dir` | string | 非空 = 把每个下行帧存成 json 到该目录 (抓包分析) |
 | `dry_run` | bool | `true` = 只打印"将会改写什么", **不真的改** (预演) |
+| `capture_max` | int | 内存捕获环条数 (默认 200, `0` = 关闭)。`GET /__frames` 查看; 动作标记 pass/rewrite/drop/up/inject |
 
 用法建议: 先用 `dry_run` 确认规则命中, 再关掉正式生效。
 未知类型的帧没生效时, 开 `log_frames` 看真实 messageType。
@@ -95,7 +96,7 @@
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
-| `block_ws_types` | `["type",...]` | 丢弃指定 type 的 WS 帧 |
+| `block_ws_types` | `["type",...]` | 丢弃指定 `payload.type` 的 WS 帧 (默认空)。以 `*` 结尾做前缀匹配, 如 `desktop.update.*` |
 | `block_paths` | `["/api/...",...]` | 命中前缀的 HTTP 请求返回 `{"success":true,"data":{}}` |
 
 已知可封锁的 WS 类型 (来自 main.js handleGatewayPayload):
@@ -103,7 +104,7 @@
 ```
 broadcast.message       横幅/指令/文件等一切广播 (慎用, 全封)
 notification.push       通知推送
-renderer.pack.push      渲染层热更新包 (汉化/界面替换通道, 默认封锁)
+renderer.pack.push      渲染层热更新包 (汉化/界面替换通道)
 desktop.update.*        自动更新
 camera.signal           摄像头信号
 class.todo.updated      班级待办
@@ -143,6 +144,34 @@ teacher.profile.updated 教师资料
 效果: 横幅文本被改写、家长签字相关内容消失、尾部带教务处落款;
 张三从座位表和点名消失; 小明小红、王五赵六永远同桌; 横幅时长随服务器;
 热更新包被拦截; 其余功能不受影响。
+
+## 注入与捕获 API (代理 HTTP 接口)
+
+代理明文端口 (默认 8100, **默认只绑 127.0.0.1**; 需给同网段用则 `--admin-host 0.0.0.0`)
+上除 `/__rules` 外还有:
+
+| 接口 | 方法 | 说明 |
+|---|---|---|
+| `/__status` | GET | `clients`(在线会话) / `capture`(捕获条数) / `upstreamIp` / `passthrough` / `startedAt` |
+| `/__clients` | GET | 在线教室会话数 |
+| `/__frames` | GET | 捕获环: `?n=50` 取最近 50 条, `?clear=1` 取出并清空 |
+| `/__inject` | POST | 帧注入 (见下) |
+
+捕获条: `{t, dir, action, type, messageType, id, content/command..., raw(截断)}`。
+`dir`: `down` 服务器→客户端 / `up` 客户端→服务器 / `inject` 本机注入。
+`action`: `pass` 原样 / `rewrite` 被改写 / `drop` 被丢弃 / `up` 上行记录 / `inject` 注入。
+
+`/__inject` 请求体三种写法:
+
+```json
+{"text": "文本", "sender": "王老师", "seconds": 60}
+{"command": "lock_system"}
+{"frame": {...}, "apply_rules": true}
+```
+
+也可带 `type` 字段直接发非广播帧 (如 `{"type": "renderer.pack.push", "version": 3}`)。
+响应: `{"ok": true, "sent_to": N, "frame": {...}}`; 没有会话时 `sent_to` 为 0。
+命令行封装: `scripts/inject.py` (banner/safety/teacher/command/raw/clients/frames)。
 
 ## 免手写 JSON: rules.py CLI
 
