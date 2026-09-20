@@ -29,6 +29,7 @@ pip install aiohttp cryptography
 [4] CA 信任: 自签 CA 装入 Windows 受信任根 (已信任则跳过)
 [5] hosts 劫持: 127.0.0.1 xlb.810086.com (已存在则跳过) + flushdns
 [6] 静默启动代理 (daemon, PID 文件管理; 先清理孤儿代理进程防端口占用)
+[6.5] 注册开机自启 (计划任务 jsxlb-hijack-boot: 开机即拉起代理, SYSTEM + 最高权限, 免登录免 UAC)
 [7] 静默启动客户端 (detached 无窗口)
 ```
 
@@ -47,6 +48,7 @@ pip install aiohttp cryptography
 | 查看当前规则 | 浏览器开 `http://127.0.0.1:8100/__rules` |
 | 只停代理 (保留客户端) | `py -3 scripts\hijack_daemon.py stop` |
 | 重启代理 | `py -3 scripts\hijack_daemon.py restart` |
+| 开机自启状态 | `py -3 scripts\autostart.py status` (或双击 `bin\autostart.bat`) |
 | 带日志启动客户端 (排障) | `py -3 scripts\launch_log.py` → 日志 `logs\client_console.log` |
 | 网络四步诊断 | `py -3 scripts\netcheck.py` |
 | 帧注入 (不经教师端) | `py -3 scripts\inject.py banner "文本" --sender 王老师` |
@@ -62,6 +64,7 @@ pip install aiohttp cryptography
 自动完成 (日志 `logs/start_end.log`):
 
 ```
+[0] 注销开机自启 (下次开机不再拉起)
 [1] 停代理 (daemon + 清理孤儿监听进程)
 [2] 关闭客户端 (全部 jsxlb 进程)
 [3] 还原 asar (app.asar.bak → app.asar, 处理只读属性)
@@ -81,6 +84,7 @@ pip install aiohttp cryptography
 仅客户端:   py -3 scripts\run_client.py
 帧注入:     py -3 scripts\inject.py banner "文本" --sender 老师
 事件监听:   py -3 scripts\watch.py
+开机自启:   py -3 scripts\autostart.py install|remove|status|run
 定位客户端: py -3 src\client_locator.py    /    py -3 scripts\install_info.py
 ```
 

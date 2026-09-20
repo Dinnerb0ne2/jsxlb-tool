@@ -95,6 +95,17 @@ py -3 scripts\hijack_daemon.py restart
 处理: 以管理员运行 `bin\hijack_on.bat` (先杀后拉一键完成) 或提权跑 `hijack_daemon.py restart`。
 新版 daemon 会**核实杀没杀掉**, 失败时如实报错并给出提示, 不再报假成功。
 
+### 开机后代理没起来 (大屏"未连接服务器")
+
+劫持链路随开机自启 (计划任务 `jsxlb-hijack-boot`, SYSTEM + 最高权限 + 开机触发)。
+
+1. 任务在不在: `py -3 scripts\autostart.py status` (不在就双击 `start.bat` 重新注册)
+2. 任务在但没起来: 看 `logs\boot.log` (开机自愈日志, 每步有结论) 与 `logs\hijack_proxy.log`
+3. 开机时网络比代理晚就绪**不是问题**: 代理会延迟解析上游
+   (日志 `[resolver] 延迟解析成功`), 客户端会自动重连
+4. `[2] CA 补装失败` / `[3] asar 补丁失败` = 任务没以最高权限跑 (被改成普通权限了):
+   删掉任务 (`autostart.py remove`) 后双击 `start.bat` 重新注册
+
 ### start.bat / end.bat 点了没反应或失败
 
 1. **UAC 弹窗**: 双击后应弹提权确认, 点"是"。没弹 → 该 bat 在受限环境, 右键"以管理员身份运行"

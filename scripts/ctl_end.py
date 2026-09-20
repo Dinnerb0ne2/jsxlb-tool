@@ -15,6 +15,10 @@ import ctl_common as C
 def main():
     C.log("=== end ===")
 
+    # 0. 注销开机自启 (先做: 即使后面某步失败, 下次开机也不会再拉起)
+    r = C.run([sys.executable, os.path.join(C.SCRIPTS, "autostart.py"), "remove"])
+    C.log("[0] 开机自启%s" % ("已注销" if (r and r.returncode == 0) else "未注册/注销失败"))
+
     # 1. stop proxy via daemon, then kill any orphan listeners
     C.daemon("stop")
     time.sleep(1)

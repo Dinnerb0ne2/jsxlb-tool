@@ -75,6 +75,13 @@ def main():
         C.log("[!] proxy NOT listening on 443 (见 logs/hijack_proxy.log)")
         return 1
 
+    # 6.5 开机自启注册 (end.bat 会注销; 计划任务: 开机 + SYSTEM + 最高权限)
+    r = C.run([sys.executable, os.path.join(C.SCRIPTS, "autostart.py"), "install"])
+    if r and r.returncode == 0:
+        C.log("[6.5] 开机自启已注册 (随开机拉起代理, 免登录免 UAC)")
+    else:
+        C.log("[6.5] 开机自启注册失败 (可手动: bin\\autostart.bat install)")
+
     # 7. launch client (silent)
     exe = C.client_exe(d)
     if exe:

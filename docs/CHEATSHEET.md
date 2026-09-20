@@ -20,6 +20,8 @@
 | `py -3 scripts\schedule.py import timetable.json` | 导入课表, 三个弹窗按课表显示 |
 | `py -3 scripts\schedule.py status` | 课表状态 (上课/课间/课表外) + 折叠队列 |
 | `py -3 scripts\schedule.py force class` | 演练: 强制"上课中" |
+| `py -3 scripts\autostart.py status` | 开机自启状态 (计划任务 jsxlb-hijack-boot) |
+| `py -3 scripts\autostart.py install / remove` | 注册 / 注销开机自启 (需管理员) |
 | `py -3 scripts\netcheck.py` | 网络六步诊断 (hosts/公共DNS/系统DNS/DoH/出站/代理) |
 
 ## 看日志

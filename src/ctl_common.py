@@ -213,17 +213,14 @@ def _is_foreign_listener(pid):
         return False
     return ("hijack_proxy" not in out) and ("python" not in out)
 
-def kill_port_owners(ports=(443, 8100)):
-    """Kill our orphan proxy processes LISTENING on the given ports.
-    安全阀: 命令行明确不是代理的进程只警告不杀 (防止误杀占用 443 的其它服务)。
-    Returns list of killed PIDs. Needs admin (start/end run elevated)."""
-    killed = []
+def _listener_pids(ports):
+    """从 netstat 反查监听这些端口的 PID。"""
+    pids = set()
     try:
         out = subprocess.run(["netstat", "-ano"], capture_output=True, text=True,
                              errors="replace", timeout=20).stdout
     except Exception:
-        return killed
-    pids = set()
+        return pids
     for line in out.splitlines():
         parts = line.split()
         if len(parts) >= 5 and "LISTENING" in line:
@@ -231,12 +228,24 @@ def kill_port_owners(ports=(443, 8100)):
             for port in ports:
                 if lp.endswith(":%d" % port) and parts[-1].isdigit():
                     pids.add(int(parts[-1]))
-    for pid in pids:
+    return pids
+
+def kill_port_owners(ports=(443, 8100)):
+    """Kill our orphan proxy processes LISTENING on the given ports.
+    安全阀: 命令行明确不是代理的进程只警告不杀; 杀完**复查**——还在监听就如实报到
+    (提权代理在非提权下杀不掉), 不再假装成功。
+    Returns list of killed PIDs. Needs admin (start/end run elevated)."""
+    killed = []
+    for pid in sorted(_listener_pids(ports)):
         if pid <= 4:
             continue
         if _is_foreign_listener(pid):
             log("[!] 端口 %s 被非代理进程占用 (PID %d), 跳过不杀" % (list(ports), pid))
             continue
         run(["taskkill", "/F", "/PID", str(pid)])
+        time.sleep(0.3)
+        if pid in _listener_pids(ports):
+            log("[!] 无法终止 PID %d (提权进程, 需管理员运行)" % pid)
+            continue
         killed.append(pid)
     return killed

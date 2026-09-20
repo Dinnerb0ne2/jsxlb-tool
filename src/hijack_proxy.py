@@ -360,11 +360,37 @@ def resolve_upstream(domain, explicit_ip=None, cert_dir=".", verbose=False):
 class FixedResolver(aiohttp.resolver.AbstractResolver):
     """把一切域名解析到候选 IP 列表 (首个探活通过的优先)。
     多 IP 容错: 主 IP 连接失败时 aiohttp 会尝试列表中的下一个。
-    列表为空 (上游 IP 全解析失败) 时抛出带指引的异常, 而不是静默自环。"""
-    def __init__(self, ips):
+    列表为空时不立刻放弃: **延迟重试解析** —— 开机自启时网络常比代理晚就绪,
+    首个请求到达时再解析一次 (同一域名单次尝试, 30s 节流), 成功则本次连接即可用。
+    仍失败时抛出带指引的异常, 而不是静默自环。"""
+    def __init__(self, ips, domain=None, cert_dir="."):
         self.ips = ips if isinstance(ips, list) else [ips]
+        self.domain = domain
+        self.cert_dir = cert_dir
+        self._last_try = 0.0
+
+    async def _retry_resolve(self):
+        """延迟解析 (在线程里跑阻塞解析, 不卡住其他连接)。"""
+        global UPSTREAM_IP
+        now = time.time()
+        if not self.domain or now - self._last_try < 30:
+            return
+        self._last_try = now
+        try:
+            loop = asyncio.get_running_loop()
+            ip, src, cands = await loop.run_in_executor(
+                None, lambda: resolve_upstream(self.domain, None, self.cert_dir))
+        except Exception as e:
+            log("[resolver] 延迟解析异常: %s" % e)
+            return
+        if ip:
+            self.ips = cands or [ip]
+            UPSTREAM_IP = ip
+            log("[resolver] 延迟解析成功: %s (来源 %s) —— 开机/断网恢复" % (ip, src))
 
     async def resolve(self, host, port=0, family=socket.AF_INET):
+        if not self.ips:
+            await self._retry_resolve()
         if not self.ips:
             raise OSError(
                 "no upstream IP resolved; use --upstream-ip <真实IP> "
@@ -1495,7 +1521,9 @@ async def main():
     up_ctx.verify_mode = ssl.CERT_NONE
     AIO_ssl_ctx = up_ctx
     AIO = ClientSession(
-        connector=TCPConnector(ssl=up_ctx, resolver=FixedResolver(cands or ([UPSTREAM_IP] if UPSTREAM_IP else [])),
+        connector=TCPConnector(ssl=up_ctx,
+                               resolver=FixedResolver(cands or ([UPSTREAM_IP] if UPSTREAM_IP else []),
+                                                      ARGS.upstream_host, ARGS.cert_dir),
                                force_close=True),
         timeout=ClientTimeout(total=30))
 

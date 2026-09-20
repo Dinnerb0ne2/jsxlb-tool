@@ -27,6 +27,7 @@
 | 抓帧/回看 | `py -3 scripts\inject.py frames 50` (pass/rewrite/drop 动作标记) |
 | 事件流监听 | `py -3 scripts\watch.py` (tail -f, 只看关键事件) |
 | 课表调度 | `py -3 scripts\schedule.py status` / `import timetable.json` |
+| 开机自启 | `py -3 scripts\autostart.py status` (start.bat 会注册, end.bat 会注销) |
 
 ## 功能一览
 
@@ -46,6 +47,7 @@
 | 会话/帧捕获 (内存环) | `debug.capture_max` (默认 200) + `GET /__frames` |
 | 三个弹窗按课表显示 | `schedule.targets` + `py -3 scripts\schedule.py import timetable.json` |
 | 阻止客户端自动更新 (默认开启) | `update.block` 三层防线 (防 asar 补丁被更新覆盖) |
+| 开机自启 (跟客户端一起起) | `start.bat` 注册计划任务, `end.bat` 注销; 开机自愈 hosts/CA/asar/代理 |
 
 ## 目录结构
 
@@ -66,6 +68,7 @@ jsxlb/                          ← 本工具链根 (整体拷贝可迁移)
 │   ├── inject.py               帧注入 CLI (banner/safety/teacher/command/raw/frames)
 │   ├── watch.py                事件流监听 (tail -f, 只看关键事件)
 │   ├── schedule.py             课表调度 (import/status/check/force/on/off)
+│   ├── autostart.py            开机自启 (install/remove/status/run)
 │   ├── netcheck.py             网络诊断 (六步, 含抗污染验证)
 │   ├── run_client.py / launch_log.py   启动客户端
 │   └── install_info.py         打印客户端路径
@@ -73,6 +76,7 @@ jsxlb/                          ← 本工具链根 (整体拷贝可迁移)
 │   ├── hijack_on.bat / hijack_off.bat / hijack_patch.bat
 │   ├── status.bat              状态一览 (含在线会话/捕获数)
 │   ├── netcheck.bat / inject.bat   网络诊断 / 帧注入快捷入口
+│   ├── autostart.bat           开机自启管理
 │   └── start_all_silent.bat / stop_proxy_silent.bat
 ├── testsuite/
 │   └── test_inject.py          集成测试 (假上游 + 真代理 + 注入/捕获断言)

@@ -29,6 +29,7 @@ jsxlb/
 │   ├── inject.py              帧注入 CLI (banner/safety/teacher/command/raw/frames)
 │   ├── watch.py               事件流监听 (tail -f, 只听关键事件)
 │   ├── schedule.py            课表调度 CLI (import/status/check/force/on/off)
+│   ├── autostart.py           开机自启 (install/remove/status/run; start/end 自动调)
 │   ├── netcheck.py            网络诊断 (六步, 含 DNS 污染检测)
 │   ├── run_client.py          静默启动客户端
 │   ├── launch_log.py          带日志启动客户端 (排障)
@@ -37,6 +38,7 @@ jsxlb/
 │   ├── hijack_on.bat / hijack_off.bat / hijack_patch.bat
 │   ├── status.bat             状态一览 (含在线会话/捕获数)
 │   ├── netcheck.bat / inject.bat   网络诊断 / 帧注入快捷入口
+│   ├── autostart.bat          开机自启管理
 │   └── start_all_silent.bat / stop_proxy_silent.bat
 ├── rules/hijack_rules.json    规则文件 (热更新)
 ├── rules/upstream_ip.txt      上游 IP 手动兜底 (校园网 DNS 全封时用)
@@ -149,6 +151,7 @@ jsxlb/
 | 集成测试 | `testsuite/test_inject.py` | 假上游 + 真代理 + WS 客户端：改写/注入/捕获/CLI 四段断言 |
 | 课表调度 (三个弹窗) | `schedule` 规则段 + `scripts/schedule.py` | 按导入课表: 课间显示、课上收起(课间自动补发)或丢弃; `/__status` 暴露状态与折叠队列 |
 | 阻止客户端自动更新 (默认开启) | `update` 规则段 | 三层防线: 服务器判定接口假应答 + `/desktop-updates/*` 404 + `desktop.update.*` 丢帧; 防 asar 补丁被更新覆盖 |
+| 开机自启 (随客户端一起起) | `scripts/autostart.py` (start.bat 注册 / end.bat 注销) | 计划任务 SYSTEM+HIGHEST+ONSTART; 开机自愈 hosts / CA / asar / 代理; 代理支持延迟解析上游 (网络比代理晚就绪也能自恢复) |
 
 验证：`--selftest` ALL PASS（扩到 20 组断言）；`testsuite/test_inject.py` PASS；
 全量 `py_compile` 通过。
