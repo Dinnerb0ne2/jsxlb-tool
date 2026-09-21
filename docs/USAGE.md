@@ -22,6 +22,7 @@ pip install aiohttp cryptography
 自动完成 (全程写 `logs/start_end.log`, 每步可见):
 
 ```
+[0] 环境预检: 解释器依赖 (aiohttp/cryptography) + 端口; 缺依赖就自动 pip install -r requirements.txt
 [1] 定位客户端安装目录 (注册表/常见路径/快捷方式/盘符扫描)
 [2] 清理残留客户端进程 (防止旧会话/幽灵窗口)
 [3] asar 补丁: 8 处 rejectUnauthorized: true -> false (等长字节替换 + integrity 更新, 原版备份 app.asar.bak)
@@ -49,6 +50,7 @@ pip install aiohttp cryptography
 | 只停代理 (保留客户端) | `py -3 scripts\hijack_daemon.py stop` |
 | 重启代理 | `py -3 scripts\hijack_daemon.py restart` |
 | 开机自启状态 | `py -3 scripts\autostart.py status` (或双击 `bin\autostart.bat`) |
+| 环境体检 (换机器先跑) | `py -3 scripts\envcheck.py` (解释器/依赖/端口, 缺什么给什么命令) |
 | 带日志启动客户端 (排障) | `py -3 scripts\launch_log.py` → 日志 `logs\client_console.log` |
 | 网络四步诊断 | `py -3 scripts\netcheck.py` |
 | 帧注入 (不经教师端) | `py -3 scripts\inject.py banner "文本" --sender 王老师` |
@@ -85,6 +87,7 @@ pip install aiohttp cryptography
 帧注入:     py -3 scripts\inject.py banner "文本" --sender 老师
 事件监听:   py -3 scripts\watch.py
 开机自启:   py -3 scripts\autostart.py install|remove|status|run
+环境预检:   py -3 scripts\envcheck.py [--ensure]
 定位客户端: py -3 src\client_locator.py    /    py -3 scripts\install_info.py
 ```
 

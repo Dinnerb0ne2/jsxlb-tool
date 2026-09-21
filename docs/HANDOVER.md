@@ -16,6 +16,7 @@
 ```
 jsxlb/
 ├── start.bat / end.bat        一键开启 / 完全恢复 (双击, 自动提权)
+├── requirements.txt           运行依赖清单 (aiohttp / cryptography)
 ├── src/                       核心库
 │   ├── hijack_proxy.py        代理主程序 (TLS 终结 + 规则引擎 + 抗污染解析)
 │   ├── patch_asar.py          客户端证书校验补丁 (等长字节替换, 毫秒级)
@@ -30,6 +31,7 @@ jsxlb/
 │   ├── watch.py               事件流监听 (tail -f, 只听关键事件)
 │   ├── schedule.py            课表调度 CLI (import/status/check/force/on/off)
 │   ├── autostart.py           开机自启 (install/remove/status/run; start/end 自动调)
+│   ├── envcheck.py            环境预检 (解释器/依赖/端口; start 第 [0] 步调用)
 │   ├── netcheck.py            网络诊断 (六步, 含 DNS 污染检测)
 │   ├── run_client.py          静默启动客户端
 │   ├── launch_log.py          带日志启动客户端 (排障)
@@ -140,6 +142,7 @@ jsxlb/
 | 9 | `ctl_common.set_readonly` 死变量；`kill_port_owners` 盲杀 443/8100 占用者 | 删死变量；先验命令行，非代理进程只警告不杀 |
 | 10 | `doh_resolve` 死代码 | 删除 |
 | 11 | `daemon stop` 杀不掉提权代理也报“已停止”, 还把 PID 文件删了 → 状态错乱、restart 起不来 (现场实测) | stop 改为**核实结果** (PID 失效时从 443/8100 反查孤儿); 失败如实报错并提示提权; restart 失败即中止; start 增加孤儿占用检测 |
+| 12 | 校园现场: `[6] proxy NOT listening on 443` 只报现象不报原因 —— 真相是 `F:\jsxlb` 的 Python 缺 aiohttp, 代理启动瞬间死 | start 新增 `[0]` 环境预检 (`envcheck.py --ensure`, 缺依赖自动 pip 装); `[6]` 失败时**贴代理日志尾部**并给两条常见原因; 新增 requirements.txt |
 
 **新增能力**：
 
@@ -152,6 +155,7 @@ jsxlb/
 | 课表调度 (三个弹窗) | `schedule` 规则段 + `scripts/schedule.py` | 按导入课表: 课间显示、课上收起(课间自动补发)或丢弃; `/__status` 暴露状态与折叠队列 |
 | 阻止客户端自动更新 (默认开启) | `update` 规则段 | 三层防线: 服务器判定接口假应答 + `/desktop-updates/*` 404 + `desktop.update.*` 丢帧; 防 asar 补丁被更新覆盖 |
 | 开机自启 (随客户端一起起) | `scripts/autostart.py` (start.bat 注册 / end.bat 注销) | 计划任务 SYSTEM+HIGHEST+ONSTART; 开机自愈 hosts / CA / asar / 代理; 代理支持延迟解析上游 (网络比代理晚就绪也能自恢复) |
+| 环境预检 + 依赖自补 | `scripts/envcheck.py` + `requirements.txt` | start 第 [0] 步自动 `--ensure`; 失败时把真原因 (代理日志尾部) 顶到 start_end.log; 换机器/换 Python 不再瞎猜 |
 
 验证：`--selftest` ALL PASS（扩到 20 组断言）；`testsuite/test_inject.py` PASS；
 全量 `py_compile` 通过。

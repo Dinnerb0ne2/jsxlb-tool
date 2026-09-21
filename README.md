@@ -28,6 +28,7 @@
 | 事件流监听 | `py -3 scripts\watch.py` (tail -f, 只看关键事件) |
 | 课表调度 | `py -3 scripts\schedule.py status` / `import timetable.json` |
 | 开机自启 | `py -3 scripts\autostart.py status` (start.bat 会注册, end.bat 会注销) |
+| 环境体检 | `py -3 scripts\envcheck.py` (换机器/换 Python 先跑, 缺依赖给补装命令) |
 
 ## 功能一览
 
@@ -56,6 +57,7 @@ jsxlb/                          ← 本工具链根 (整体拷贝可迁移)
 ├── README.md                   本文件
 ├── start.bat                   一键开启 (自动提权)
 ├── end.bat                     一键关闭/恢复 (自动提权)
+├── requirements.txt            运行依赖清单 (aiohttp / cryptography)
 ├── src/                        核心库
 │   ├── hijack_proxy.py         MITM 代理主程序 (规则引擎/防自环/抗污染)
 │   ├── ctl_common.py           一键流程共享操作 (hosts/CA/进程/asar)
@@ -69,6 +71,7 @@ jsxlb/                          ← 本工具链根 (整体拷贝可迁移)
 │   ├── watch.py                事件流监听 (tail -f, 只看关键事件)
 │   ├── schedule.py             课表调度 (import/status/check/force/on/off)
 │   ├── autostart.py            开机自启 (install/remove/status/run)
+│   ├── envcheck.py             环境预检 (解释器/依赖/端口)
 │   ├── netcheck.py             网络诊断 (六步, 含抗污染验证)
 │   ├── run_client.py / launch_log.py   启动客户端
 │   └── install_info.py         打印客户端路径

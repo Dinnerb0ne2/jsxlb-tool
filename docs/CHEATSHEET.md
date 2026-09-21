@@ -22,6 +22,7 @@
 | `py -3 scripts\schedule.py force class` | 演练: 强制"上课中" |
 | `py -3 scripts\autostart.py status` | 开机自启状态 (计划任务 jsxlb-hijack-boot) |
 | `py -3 scripts\autostart.py install / remove` | 注册 / 注销开机自启 (需管理员) |
+| `py -3 scripts\envcheck.py` | 环境预检 (解释器/依赖/端口; 换机器先跑) |
 | `py -3 scripts\netcheck.py` | 网络六步诊断 (hosts/公共DNS/系统DNS/DoH/出站/代理) |
 
 ## 看日志

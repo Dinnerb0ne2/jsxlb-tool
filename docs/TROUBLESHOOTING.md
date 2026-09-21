@@ -95,6 +95,30 @@ py -3 scripts\hijack_daemon.py restart
 处理: 以管理员运行 `bin\hijack_on.bat` (先杀后拉一键完成) 或提权跑 `hijack_daemon.py restart`。
 新版 daemon 会**核实杀没杀掉**, 失败时如实报错并给出提示, 不再报假成功。
 
+### start 报 `[6] proxy NOT listening on 443`
+
+新版 start 会在这一步**把代理日志尾部直接贴出来** (start_end.log 里可见), 真原因就在那几行:
+
+| 代理日志里出现 | 原因 | 处理 |
+|---|---|---|
+| `ModuleNotFoundError: No module named 'aiohttp'` (或 cryptography) | 换了机器/换了 Python, 运行依赖不在这个解释器里 (实测: 学校机器 `F:\jsxlb` + 裸 Python) | `py -3 scripts\envcheck.py --ensure`; 校园网挡 PyPI 就换源或离线拷 whl |
+| `[WinError 10048] 每个套接字地址只允许使用一次` / `端口 443 仍被占用` | 443 被其它进程占着 | `netstat -ano | findstr :443` 找 PID; `end.bat` 清干净再 `start.bat` |
+| 代理日志里**没有新行** | 启动命令根本没跑起来 (解释器路径错 / 盘符变了) | `py -3 scripts\envcheck.py` 看解释器; 从新盘符重新 `start.bat` |
+
+一条命令体检: `py -3 scripts\envcheck.py` (解释器 / 依赖 / 端口, 给结论)。
+
+校园网挡 PyPI 时离线补装 (在能上网的机器上先下 whl):
+
+```powershell
+# 能上网的机器
+py -3 -m pip download aiohttp cryptography -d wheels --only-binary :all:
+# 拷到学校机器后
+py -3 -m pip install --no-index --find-links wheels aiohttp cryptography
+```
+
+> 工具链可整目录拷贝, 盘符会变 (实测过 `E:\jsxlb` → `F:\jsxlb`)。开机自启任务记的是**注册时**的绝对路径,
+> 盘符变了就从新盘符再跑一次 `start.bat` 重新注册 (任务会被 `/F` 覆盖)。
+
 ### 开机后代理没起来 (大屏"未连接服务器")
 
 劫持链路随开机自启 (计划任务 `jsxlb-hijack-boot`, SYSTEM + 最高权限 + 开机触发)。

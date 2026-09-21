@@ -13,6 +13,18 @@ import ctl_common as C
 def main():
     C.log("=== start ===")
 
+    # 0. 环境预检: 运行依赖 (aiohttp/cryptography); 缺了就自动补装
+    #    (换机器/换 Python 时依赖不在解释器里, 代理会死在 ModuleNotFoundError)
+    envr = C.run([sys.executable, os.path.join(C.SCRIPTS, "envcheck.py"), "--ensure"])
+    if envr and envr.returncode == 0:
+        C.log("[0] 环境预检 OK (%s)" % sys.executable)
+    else:
+        out = ((envr.stdout or "") + (envr.stderr or "")).strip() if envr else "(envcheck 未运行)"
+        for line in out.splitlines()[-6:]:
+            C.log("      %s" % line)
+        C.log("[!] abort: 运行依赖不可用 —— 手动: py -3 scripts\\envcheck.py --ensure")
+        return 1
+
     # 1. locate client
     d = C.client_dir()
     if not d:
@@ -72,7 +84,17 @@ def main():
     if C.wait_port_open(443, timeout=15):
         C.log("[6] proxy listening on 443: OK")
     else:
-        C.log("[!] proxy NOT listening on 443 (见 logs/hijack_proxy.log)")
+        C.log("[!] proxy NOT listening on 443 —— 代理日志尾部 (真原因通常在这里):")
+        try:
+            with open(os.path.join(C.ROOT, "logs", "hijack_proxy.log"),
+                      encoding="utf-8", errors="replace") as f:
+                tail = f.readlines()[-8:]
+            for line in tail:
+                C.log("      %s" % line.rstrip())
+        except OSError:
+            pass
+        C.log("[!] 常见原因: 1) 依赖缺失 -> py -3 scripts\\envcheck.py --ensure; "
+              "2) 443 被占 -> netstat -ano | findstr :443")
         return 1
 
     # 6.5 开机自启注册 (end.bat 会注销; 计划任务: 开机 + SYSTEM + 最高权限)

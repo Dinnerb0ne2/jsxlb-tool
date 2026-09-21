@@ -124,6 +124,10 @@ def run_boot():
         boot_log("[3] asar %s" % ("已重打补丁" if patched else "补丁失败"))
         ok = ok and patched
 
+    envr = C.run([PY, os.path.join(ROOT, "scripts", "envcheck.py"), "--ensure"])
+    boot_log("[3.5] 依赖预检 %s" % ("OK" if (envr and envr.returncode == 0)
+                                    else "失败 (跑 scripts\\envcheck.py 看详情)"))
+
     orphans = C.kill_port_owners()
     if orphans:
         boot_log("[4] 清理孤儿代理: %s" % orphans)
